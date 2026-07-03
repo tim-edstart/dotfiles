@@ -1,0 +1,7 @@
+# Never commit local secrets / machine state
+.zshrc.local
+*.local
+zsh/.zcompdump*
+.DS_Store
+# nvim runtime state (installed plugins live in ~/.local/share/nvim)
+nvim/.netrwhist

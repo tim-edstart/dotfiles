@@ -1,0 +1,24 @@
+# ~/.zshrc.local — machine-specific secrets. Copy to ~/.zshrc.local and fill in.
+# NEVER commit this file with real values. It is gitignored.
+
+# Edstart Maven (S3-backed)
+export STRATEGICODE_MAVEN_KEY="AKIA..."
+export STRATEGICODE_MAVEN_SECRET="..."
+
+# Edstart BigQuery service account (base64 of the JSON key)
+export EDSTART_GOOGLE_BIGQUERY_SERVICEACCOUNT="..."
+
+# Edstart local DB
+export EDSTART_DB_NAME="edstart"
+export EDSTART_DB_USER="edstart_app"
+export EDSTART_DB_PWD="..."
+export EDSTART_IN_PROGRESS_JOBS_FILE_PATH="/var/log/admin_in_progress_jobs.txt"
+
+# AWS (prefer `aws sso login` / a named profile over static keys)
+# export AWS_ACCESS_KEY_ID="..."
+# export AWS_SECRET_ACCESS_KEY="..."
+# export AWS_SESSION_TOKEN="..."
+
+# JDK / toolchain paths (adjust per machine)
+# export CPPFLAGS="-I/usr/local/opt/openjdk@11/include"
+# export PATH="/usr/local/opt/openjdk@11/bin:$PATH"

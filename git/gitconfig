@@ -1,0 +1,15 @@
+[alias]
+	co = checkout
+	b = branch
+	s = status
+[user]
+	email = tim.luo@edstart.com.au
+	name = Tim Luo
+[core]
+	editor = nvim
+[credential "https://github.com"]
+	helper = 
+	helper = !gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !gh auth git-credential
