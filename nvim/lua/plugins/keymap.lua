@@ -9,10 +9,10 @@ return {
   Plug 'junegunn/vim-peekaboo' { event = 'VeryLazy' };
   Plug 'folke/which-key.nvim' {
     event = 'VeryLazy',
-    version = 'v2.1.0',  -- v3 is not compatible with lazy.nvim < v11
+    version = '^3',  -- v3.x releases; lazy-lock.json pins the exact commit
     opts = {
-      window = { border = "single", winblend = 10 },
-      layout = { height = { min = 4, max = 8 } },
+      preset = 'classic',  -- bottom panel, as in v2
+      win = { border = 'single', height = { min = 4, max = 8 }, wo = { winblend = 10 } },
     }
     --hi WhichKeyFloat  guibg=#1a2a3a
   };

@@ -106,6 +106,6 @@
   "vim-typora": { "branch": "master", "commit": "6d87ab5843f87797c786a495f37aa297d1069623" },
   "vim-xtabline": { "branch": "master", "commit": "ccfa687d4f8d34bc2e23facc9b92c3abb90e5f93" },
   "vimtex": { "branch": "master", "commit": "3f96503904db6acdb7108cd93a9580dd41e88555" },
-  "which-key.nvim": { "branch": "main", "commit": "0539da005b98b02cf730c1d9da82b8e8edb1c2d2" },
+  "which-key.nvim": { "branch": "main", "commit": "fcbf4eea17cb299c02557d576f0d568878e354a4" },
   "wilder.nvim": { "branch": "master", "commit": "b255fe65ee12bd6bba228b6b60c9803a60f2f347" }
 }
