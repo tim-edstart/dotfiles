@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 DOMAIN = "com.googlecode.iterm2"
-FONT = "MesloLGS-NF-Regular 13"
+FONT = "MesloLGS-NF-Regular 12"
 PALETTE = {  # IntelliJ Dark (New UI), with a darker background; matches nvim/colors/intellij-dark.lua
     "Ansi 0 Color": "161719", "Ansi 1 Color": "F75464", "Ansi 2 Color": "6AAB73", "Ansi 3 Color": "E0BB65",
     "Ansi 4 Color": "56A8F5", "Ansi 5 Color": "C77DBB", "Ansi 6 Color": "2AACB8", "Ansi 7 Color": "BCBEC4",
