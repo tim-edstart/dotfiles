@@ -6,7 +6,7 @@ local Plug = require('utils.plug_utils').Plug
 return {
   Plug 'nvim-lua/plenary.nvim' { priority = 10000 };
   Plug 'rcarriga/nvim-notify' {
-    version = 'v3.14.1',  -- 3a4e83ec breaks nvim 0.9
+    version = '^3',  -- v3.x releases; lazy-lock.json pins the exact commit
     config = require 'config.ui'.setup_notify,
   };
 
