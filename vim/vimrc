@@ -2485,9 +2485,13 @@ endfunction
 nnoremap <leader>gd :Gvdiff<CR>
 nnoremap <leader>gD :GitThreeWayDiff<CR>
 nnoremap <leader>gw :Gwrite<CR>
-nnoremap <silent> <leader>gb :echo ':Git blame -w'<CR>:Git blame -w<CR>:call FugitiveResizeGblame()<CR>
+nnoremap <silent> <leader>gb :echo ':Git blame -w'<CR>:Git blame -w --date=short<CR>:call FugitiveResizeGblame()<CR>
+" Fit the blame pane to its widest line (hash, author, date), capped at 60 columns.
 function! FugitiveResizeGblame() abort
-  if &ft == 'fugitiveblame' | vertical resize 10 | endif
+  if &ft != 'fugitiveblame' | return | endif
+  " Each line is '<sha> (<author> <date> <lnum>) <code>'; measure up to the closing ')'.
+  let l:width = max(map(getline(1, '$'), 'matchend(v:val, ''^.\{-}\d\+)'')'))
+  execute 'vertical resize' min([l:width + 1, 60])
 endfunction
 
 " on commit, type 'cA' to enter in amend mode

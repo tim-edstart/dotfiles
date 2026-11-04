@@ -123,6 +123,7 @@ end
 _require 'config.keymap'
 _require 'config.commands'
 _require 'config.statuscolumn'
+require('config.tmux_blame').setup()  -- cursor-line blame in the tmux status bar
 
 require 'config.folding'
 

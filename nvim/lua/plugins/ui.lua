@@ -41,7 +41,9 @@ return {
     cmd = 'FZF', func = 'fzf#*',
   };
   Plug 'ibhagwan/fzf-lua' {
-    version = '>=0.7', -- see fzf-lua:7cede182 (2025.2+)
+    -- No version: fzf-lua stopped tagging releases at 0.7 (Apr 2025), which breaks on Neovim 0.12.
+    -- Track main; lazy-lock.json pins the exact commit.
+    version = false,
     event = { 'VeryLazy', 'CmdlineEnter' },
     config = require('config.fzf').setup,
   };
