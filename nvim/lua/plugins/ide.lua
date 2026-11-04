@@ -46,7 +46,7 @@ return {
   Plug 'ray-x/lsp_signature.nvim' { event = LspSetup };
   Plug 'WhoIsSethDaniel/toggle-lsp-diagnostics.nvim' { lazy = true };
   Plug 'nvim-lua/lsp-status.nvim' { event = LspSetup, config = require('config.lsp').setup_lsp_status };
-  Plug 'j-hui/fidget.nvim' { branch = 'legacy', event = LspSetup, config = require('config.lsp').setup_fidget };
+  Plug 'j-hui/fidget.nvim' { version = '^2', event = LspSetup, config = require('config.lsp').setup_fidget };
   Plug 'folke/trouble.nvim' { event = LspSetup, config = require('config.lsp').setup_trouble };
   Plug 'SmiteshP/nvim-navic' { event = LspSetup, config = require('config.lsp').setup_navic };
 

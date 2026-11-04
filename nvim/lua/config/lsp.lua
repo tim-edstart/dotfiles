@@ -961,13 +961,17 @@ function M.setup_fidget()
   -- https://github.com/j-hui/fidget.nvim/blob/main/doc/fidget.md
   -- Note: This will override lsp-status.nvim (progress handlers).
   require("fidget").setup {
-    text = {
-      --see $VIMPLUG/fidget.nvim/lua/fidget/spinners.lua
-      spinner = "zip",
+    progress = {
+      display = {
+        -- see $VIMPLUG/fidget.nvim/lua/fidget/spinner/patterns.lua
+        progress_icon = { "zip" },
+      },
     },
-    window = {
-      relative = "win",
-      blend = 50,
+    notification = {
+      window = {
+        relative = "win",
+        winblend = 50,
+      },
     },
   }
 end
