@@ -3,8 +3,8 @@
 
 local M = {}
 
--- Pin at lazy < v10, because it breaks cond since fbb0bea2
-local LAZY_VERSION = 'v9.25.1'  -- or 'stable'
+-- v10 (fbb0bea2) made `cond` evaluate when specs load, like `enabled`; our specs are fine with that.
+local LAZY_VERSION = 'v11.17.5'
 
 local PLUGIN_SPEC = {
   { 'folke/lazy.nvim', tag = LAZY_VERSION },
@@ -45,33 +45,6 @@ if not vim.loop.fs_stat(lazypath) then
 end
 vim.opt.rtp:prepend(lazypath)
 
--- Disable lazy clean by monkey-patching. (see folke/lazy.nvim#762)
-require("lazy.manage").clean = function(opts)
-  opts = opts or {}
-  print("[lazy.nvim] Clean operation is disabled. args = " .. ((opts.plugin or {}).dir or '') .. '\n')
-  return require("lazy.manage").run({ pipeline = {} })
-end
-require("lazy.manage.task.fs").clean.run = function(self)
-  ---@diagnostic disable-next-line: undefined-field
-  local plugin_name = (self.plugin or {}).name or '(unknown)'
-  print("[lazy.nvim] Clean operation is disabled. (lazy.manage.task.fs) plugin = " .. plugin_name .. '\n')
-  local inform_user = function()
-    local msg = ("[lazy.nvim] Please check and remove `%s/%s.cloning` manually.\n"):format(vim.env.VIMPLUG, plugin_name)
-    vim.notify(msg, vim.log.levels.ERROR, { title = 'config/plugins.lua', timeout = 10000, markdown = true })
-  end
-  vim.api.nvim_create_autocmd('VimEnter', { pattern = '*', callback = inform_user })
-  inform_user()  -- for headless execution
-end
-
--- Monkey-patch: Normalize git origin, avoid unnecessary re-cloning on update
----@param repo string path to the git repository
-require("lazy.manage.git").get_origin = function(repo)
-  local origin = require("lazy.manage.git").get_config(repo)["remote.origin.url"]
-  origin = string.gsub(origin, 'git@github.com:', 'https://github.com/')
-  origin = string.gsub(origin, 'https://git::@github.com/', 'https://github.com/')
-  return origin
-end
-
 -- workaround for neovim/neovim#27413
 -- vim.fs must be loaded before vim.loader.enable()
 require("vim.fs")
@@ -107,7 +80,39 @@ require("lazy").setup(PLUGIN_SPEC, {
   change_detection = {
     notify = true,
   },
+  rocks = {
+    enabled = false,  -- no plugin here needs luarocks
+  },
 })
+
+-- These patch lazy.manage, which lazy v11 can only load after setup() (it reads the config).
+-- Disable lazy clean by monkey-patching. (see folke/lazy.nvim#762)
+require("lazy.manage").clean = function(opts)
+  opts = opts or {}
+  print("[lazy.nvim] Clean operation is disabled. args = " .. ((opts.plugin or {}).dir or '') .. '\n')
+  return require("lazy.manage").run({ pipeline = {} })
+end
+require("lazy.manage.task.fs").clean.run = function(self)
+  ---@diagnostic disable-next-line: undefined-field
+  local plugin_name = (self.plugin or {}).name or '(unknown)'
+  print("[lazy.nvim] Clean operation is disabled. (lazy.manage.task.fs) plugin = " .. plugin_name .. '\n')
+  local inform_user = function()
+    local msg = ("[lazy.nvim] Please check and remove `%s/%s.cloning` manually.\n"):format(vim.env.VIMPLUG, plugin_name)
+    vim.notify(msg, vim.log.levels.ERROR, { title = 'config/plugins.lua', timeout = 10000, markdown = true })
+  end
+  vim.api.nvim_create_autocmd('VimEnter', { pattern = '*', callback = inform_user })
+  inform_user()  -- for headless execution
+end
+
+-- Monkey-patch: Normalize git origin, avoid unnecessary re-cloning on update
+---@param repo string path to the git repository
+require("lazy.manage.git").get_origin = function(repo)
+  local origin = require("lazy.manage.git").get_config(repo)["remote.origin.url"]
+  origin = string.gsub(origin, 'git@github.com:', 'https://github.com/')
+  origin = string.gsub(origin, 'https://git::@github.com/', 'https://github.com/')
+  return origin
+end
+
 
 -- Close auto-install window
 vim.cmd [[

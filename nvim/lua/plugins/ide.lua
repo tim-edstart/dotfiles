@@ -8,7 +8,9 @@ local UpdateRemotePlugins = require('utils.plug_utils').UpdateRemotePlugins
 local LspSetup = 'User LspSetup'
 
 local function has(f) return vim.fn.has(f) > 0 end
-local has_py3 = function(p) return require('config.pynvim')() end
+-- Cheap check: lazy.nvim v10+ evaluates `cond` during startup, and config.pynvim starts the
+-- Python host (~30ms). init.lua still runs config.pynvim right after startup (installs pynvim if missing).
+local has_py3 = function() return vim.fn.executable(vim.g.python3_host_prog or 'python3') == 1 end
 
 -- Register LspSetup, triggered much after VimEnter and VeryLazy plugins.
 vim.api.nvim_create_autocmd('VimEnter', {

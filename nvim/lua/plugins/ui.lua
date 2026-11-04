@@ -5,7 +5,9 @@ local Plug = require('utils.plug_utils').Plug
 local PlugConfig = require('utils.plug_utils').PlugConfig
 local UpdateRemotePlugins = require('utils.plug_utils').UpdateRemotePlugins
 
-local has_py3 = function(p) return require('config.pynvim')() end
+-- Cheap check: lazy.nvim v10+ evaluates `cond` during startup, and config.pynvim starts the
+-- Python host (~30ms). init.lua still runs config.pynvim right after startup (installs pynvim if missing).
+local has_py3 = function() return vim.fn.executable(vim.g.python3_host_prog or 'python3') == 1 end
 
 return {
   -- Basic UI Components
