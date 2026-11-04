@@ -31,7 +31,20 @@ return {
   };
 
   -- Indent Guideline and Scrollbar
-  Plug 'lukas-reineke/indent-blankline.nvim' { tag = 'v2.20.8', init = PlugConfig, event = 'VeryLazy' };
+  Plug 'lukas-reineke/indent-blankline.nvim' {
+    version = '^3', main = 'ibl', event = 'VeryLazy',
+    config = function()
+      require('ibl').setup {
+        indent = { char = '┊' },  -- highlight: IblIndent
+        scope = { enabled = false },
+        exclude = { filetypes = { 'help', 'NvimTree', 'markdown' }, buftypes = { 'terminal' } },
+      }
+      -- v2's show_first_indent_level = false
+      local hooks = require('ibl.hooks')
+      hooks.register(hooks.type.WHITESPACE, hooks.builtin.hide_first_space_indent_level)
+      hooks.register(hooks.type.WHITESPACE, hooks.builtin.hide_first_tab_indent_level)
+    end,
+  };
   Plug 'dstein64/nvim-scrollview' { event = 'VeryLazy' };
 
   -- Tmux support
