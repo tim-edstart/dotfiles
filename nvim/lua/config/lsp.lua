@@ -171,6 +171,7 @@ local auto_lsp_servers = {
   -- mason auto-install kotlin-language-server again.
   ['kotlin_language_server'] = false,
   ['sqlls'] = true,  -- SQL (sql-language-server, via npm)
+  ['jdtls'] = true,  -- Java (servers/ gradle monorepo; JDK/root config in lsp_setup_opts below)
 }
 
 --- Refresh or force-update mason-registry if needed (e.g. pkgs are missing)
@@ -500,6 +501,39 @@ lsp_setup_opts['yamlls'] = {
     },
   }
 }
+
+lsp_setup_opts['jdtls'] = function()
+  -- The platform monorepo (servers/) targets JVM 21, but the default `java` on
+  -- PATH may be older (e.g. homebrew JDK 11) which cannot launch jdtls.
+  -- Resolve a JDK 21 from the standard macOS location for both the jdtls
+  -- launcher and the Gradle import.
+  local java_home = nil
+  if vim.fn.executable('/usr/libexec/java_home') == 1 then
+    local out = vim.fn.systemlist({ '/usr/libexec/java_home', '-v', '21' })
+    if vim.v.shell_error == 0 then
+      java_home = vim.trim(out[1] or '')
+    end
+  end
+  local util = require('lspconfig.util')
+  return {
+    -- Prefer the root of the whole Gradle build (settings.gradle[.kts]) over a
+    -- submodule's build.gradle[.kts] or the monorepo-level .git, so jdtls
+    -- imports every module and cross-module navigation works.
+    root_dir = function(fname)
+      return util.root_pattern('settings.gradle', 'settings.gradle.kts', 'pom.xml', 'build.xml')(fname)
+        or util.root_pattern('build.gradle', 'build.gradle.kts', '.git')(fname)
+    end,
+    cmd_env = java_home and { JAVA_HOME = java_home } or nil,
+    settings = {
+      java = java_home and {
+        configuration = {
+          runtimes = { { name = 'JavaSE-21', path = java_home, default = true } },
+        },
+        import = { gradle = { java = { home = java_home } } },
+      } or nil,
+    },
+  }
+end
 
 lsp_setup_opts['kotlin_language_server'] = {
   cmd = { vim.fn.expand('~/.local/share/nvim/mason/bin/kotlin-language-server-wrapper') },
@@ -953,29 +987,92 @@ end
 --- Server"). It is NOT distributed via mason/lspconfig, so we wire it
 --- up manually with the native vim.lsp API (neovim 0.11+).
 ---
---- Install: download the standalone macOS/Linux build from
----   https://github.com/Kotlin/kotlin-lsp/releases
---- and extract so that the launcher lives at:
----   ~/.local/share/kotlin-lsp/kotlin-lsp.sh
---- (the archive bundles its own JetBrains Runtime, so no system JDK needed).
+--- Install or update: `kotlin-lsp-update` (~/.dotfiles/bin), or :KotlinLspUpdate.
+--- It puts the launcher at ~/.local/share/kotlin-lsp/bin/intellij-server; the
+--- archive bundles its own JetBrains Runtime, so no system JDK is needed.
 -----------------------------------------------------------------------
 function M._setup_kotlin_lsp()
-  local launcher = vim.fn.expand('~/.local/share/kotlin-lsp/kotlin-lsp.sh')
+  local home = vim.fn.expand('~/.local/share/kotlin-lsp')
+  -- Prefer the native launcher; kotlin-lsp.sh is deprecated (kept as fallback).
+  local launcher = home .. '/bin/intellij-server'
+  if vim.fn.executable(launcher) == 0 then
+    launcher = home .. '/kotlin-lsp.sh'
+  end
   if vim.fn.filereadable(launcher) == 0 then
     return  -- not installed; skip silently
   end
+
+  -- JetBrains' pre-alpha builds stop starting about a month after they are built: the
+  -- server exits with code 7 and "This build of kotlin-server has expired" in lsp.log.
+  -- kotlin-lsp-update swaps in the latest release. It runs on :KotlinLspUpdate, when the
+  -- server dies before it initialises, and in the background once the build is three
+  -- weeks old.
+  local updater = vim.fn.expand('~/.dotfiles/bin/kotlin-lsp-update')
+  local notify = function(msg, level) vim.notify(msg, level, { title = 'kotlin-lsp' }) end
+  local updating = false
+  local function update(args, on_done, quiet)
+    if updating then return end
+    updating = true
+    if not quiet then notify('checking for a newer build…', vim.log.levels.INFO) end
+    vim.system(vim.list_extend({ updater }, args), { text = true }, vim.schedule_wrap(function(result)
+      updating = false
+      local output = vim.trim((result.stdout or '') .. (result.stderr or ''))
+      if result.code ~= 0 then
+        return notify('update failed:\n' .. output, vim.log.levels.ERROR)
+      end
+      local unchanged = output:find('already installed', 1, true) ~= nil
+      if not (quiet and unchanged) then notify(output, vim.log.levels.INFO) end
+      if on_done then on_done(output, unchanged) end
+    end))
+  end
+  local function restart()
+    vim.lsp.enable('kotlin_lsp', false)
+    vim.lsp.enable('kotlin_lsp')
+  end
+  vim.api.nvim_create_user_command('KotlinLspUpdate', function(e)
+    update(e.bang and { '--force' } or {}, restart)
+  end, { bang = true, desc = 'Install the latest kotlin-lsp build and restart the server (! reinstalls the same build)' })
+
+  local initialised = {}  ---@type table<integer, true>
   vim.lsp.config('kotlin_lsp', {
     cmd = { launcher, '--stdio' },
     filetypes = { 'kotlin' },
+    -- Nested lists are priority groups (nvim 0.11.2+): prefer the root of the
+    -- whole Gradle build (settings.gradle[.kts]) over a submodule's
+    -- build.gradle[.kts] or the monorepo-level .git, so the whole build is
+    -- imported and cross-module navigation works.
     root_markers = {
-      'settings.gradle', 'settings.gradle.kts',
-      'build.gradle', 'build.gradle.kts',
-      'pom.xml', '.git',
+      { 'settings.gradle', 'settings.gradle.kts' },
+      { 'build.gradle', 'build.gradle.kts', 'pom.xml' },
+      '.git',
     },
+    on_init = function(client) initialised[client.id] = true end,
+    on_exit = function(code, _, client_id)
+      if code == 0 or initialised[client_id] then return end
+      vim.schedule(function()
+        notify(('the server exited before it initialised (exit %d): the build has probably expired. Updating…'):format(code), vim.log.levels.WARN)
+        update({}, function(_, unchanged)
+          if unchanged then
+            notify('the latest build is already installed, so something else is wrong: see ~/.local/state/nvim/lsp.log', vim.log.levels.ERROR)
+          else
+            restart()
+          end
+        end)
+      end)
+    end,
     on_attach = on_attach,
     capabilities = M.lsp_default_capabilities(),
   })
   vim.lsp.enable('kotlin_lsp')
+
+  -- Refresh an ageing build in the background, checking at most once a day.
+  local day = 24 * 60 * 60
+  local built = vim.fn.getftime(home .. '/build.txt')
+  local checked = vim.fn.stdpath('state') .. '/kotlin-lsp-update-checked'
+  if built > 0 and os.time() - built > 21 * day and os.time() - vim.fn.getftime(checked) > day then
+    vim.fn.writefile({}, checked)
+    vim.defer_fn(function() update({}, nil, true) end, 3000)
+  end
 end
 
 

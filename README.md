@@ -29,6 +29,7 @@ would replace is moved to `<file>.bak-<timestamp>` first.
 | `zsh/zshenv` | `~/.zshenv` | |
 | `git/gitconfig` | `~/.gitconfig` | uses `gh` as the credential helper |
 | `terminal/{alacritty,kitty,wezterm}` | `~/.config/*` | desktop only; skipped on WSL |
+| `bin/kotlin-lsp-update` | — | reinstalls JetBrains' kotlin-lsp when a build expires; nvim runs it itself |
 
 ## Secrets
 

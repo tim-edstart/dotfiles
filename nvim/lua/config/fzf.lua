@@ -131,7 +131,10 @@ function M.setup_fzf()
   end
 
   global_opts.lsp = {
-    async_or_timeout = 500,  -- 500ms. for gd, gr, code actions, etc.
+    -- Fully async: kotlin_lsp on the platform monorepo answers references in
+    -- ~8s warm / ~50s cold, so any timeout here just drops the results.
+    -- Code actions stay synchronous and fall back to fzf-lua's 5s default.
+    async_or_timeout = true,  -- for gd, gr, code actions, etc.
     code_actions = {
       previewer = "codeaction_native",
       preview_pager = (

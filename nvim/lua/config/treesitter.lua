@@ -127,6 +127,10 @@ M.parsers_to_install = vim.tbl_flatten {
     "python", "query", "regex", "vim", "yaml",
     vim.fn.has('nvim-0.9.0') > 0 and "vimdoc" or nil,
   },
+  { -- platform monorepo: kotlin/java gradle backend, TS/React frontend
+    "kotlin", "java", "groovy", "typescript", "tsx", "javascript",
+    "css", "scss", "sql", "properties", "xml", "dockerfile",
+  },
 }
 
 ---More robust version of has_parser, ignoring neovim core's built-in parsers
