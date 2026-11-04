@@ -35,11 +35,11 @@ return {
     config = require('config.lsp').setup_lsp, -- mason, lspconfig, etc.
   };
   Plug 'mason-org/mason.nvim' {
-    version = 'v1.11.0',  -- TODO v2.0 support
+    version = '^2',  -- v2.x releases; lazy-lock.json pins the exact commit
     event = LspSetup, -- as a dependency for nvim-lspconfig
   };
   Plug 'mason-org/mason-lspconfig.nvim' {
-    version = 'v1.32.0',  -- TODO v2.0 support
+    version = '^2',  -- v2.x releases; lazy-lock.json pins the exact commit
     event = LspSetup,
   };
   Plug 'folke/neodev.nvim' { event = LspSetup };

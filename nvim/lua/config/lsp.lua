@@ -216,7 +216,9 @@ function M._setup_mason()
       }
     },
   }
-  require("mason-lspconfig").setup()
+  -- automatic_enable off: servers are set up by M._setup_lspconfig (and kotlin-lsp by hand);
+  -- v2 would otherwise vim.lsp.enable() every installed server, incl. ones disabled here.
+  require("mason-lspconfig").setup { automatic_enable = false }
 
   -- ensure_installed: Install auto_lsp_servers on demand (FileType)
   maybe_refresh_mason_registry_and_then(M._ensure_mason_installed)
@@ -226,17 +228,13 @@ end
 function M._ensure_mason_installed()
   local augroup = vim.api.nvim_create_augroup('mason_autoinstall', { clear = true })
 
-  -- Hotfix against mason_lspconfig v2.0 breaking changes
-  local lspconfig_to_package = vim.F.npcall(function()
-    return require("mason-lspconfig.mappings.server").lspconfig_to_package
-  end)
-  local filetype_mappings = vim.F.npcall(function()
-    return require("mason-lspconfig.mappings.filetype")
-  end)
-  if lspconfig_to_package == nil then
-    vim.notify("mason-lspconfig is broken in v2.0; please downgrade to v1.32.0 by manual checkout",
+  local mappings = vim.F.npcall(function() return require("mason-lspconfig").get_mappings() end)
+  if mappings == nil then
+    vim.notify("mason-lspconfig: get_mappings() failed; LSP auto-install is off",
       vim.log.levels.ERROR, { title = "config/lsp" })
   end
+  local lspconfig_to_package = (mappings or {}).lspconfig_to_package
+  local filetype_mappings = (mappings or {}).filetypes
 
   local _requested = {}
 
@@ -624,7 +622,7 @@ end)
 --- setup all known and available LSP servers that are installed
 function M._setup_lspconfig()
   local all_known_lsps = vim.F.npcall(function()
-    return require('mason-lspconfig.mappings.server').lspconfig_to_package
+    return require('mason-lspconfig').get_mappings().lspconfig_to_package
   end) or {}
   local lsp_uninstalled = {}   --- { lspconfig name => mason package name }
   local mason_need_refresh = false
