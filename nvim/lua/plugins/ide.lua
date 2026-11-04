@@ -53,7 +53,8 @@ return {
 
   -- Completion
   Plug 'hrsh7th/nvim-cmp' {
-    commit = '5260e5e',  -- 2024-05-17
+    -- No pin: nvim-cmp has no releases since v0.0.2 (Jan 2025); lazy-lock.json pins the commit
+    version = false,
     event = 'InsertEnter',  -- or required by config/lsp.lua
     dependencies = {
       Plug 'hrsh7th/cmp-buffer';
