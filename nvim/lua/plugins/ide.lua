@@ -27,7 +27,7 @@ return {
 
   -- LSP (lazy loaded, see config/lsp.lua)
   Plug 'neovim/nvim-lspconfig' {
-    version = 'v2.5.0',
+    version = '^2',  -- v2.x releases; lazy-lock.json pins the exact commit
     event = LspSetup,
     dependencies = { 'mason.nvim' },
     config = require('config.lsp').setup_lsp, -- mason, lspconfig, etc.
