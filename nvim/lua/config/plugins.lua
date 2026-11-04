@@ -87,7 +87,7 @@ require("lazy").setup(PLUGIN_SPEC, {
   },
   install = {
     missing = true,
-    colorscheme = {"xoria256-wook"},
+    colorscheme = {"intellij-dark"},
   },
   ui = {
     wrap = true,

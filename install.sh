@@ -152,7 +152,7 @@ else
   warn "kotlin-lsp only ships arm64 builds; Kotlin falls back to no LSP on $ARCH"
 fi
 
-# iTerm2: Kanagawa colours, MesloLGS NF, minimal tabs
+# iTerm2: IntelliJ Dark colours, MesloLGS NF, minimal tabs
 if [[ "$OS" == "Darwin" && -f "$HOME/Library/Preferences/com.googlecode.iterm2.plist" ]]; then
   "$DOTFILES/bin/iterm2-theme" || warn "iTerm2 theme not applied; run bin/iterm2-theme"
 fi

@@ -17,7 +17,7 @@ is missing, and any file it replaces is kept as `<file>.bak-<timestamp>`. Secret
 `install.sh --no-deps` links configs and plugins without touching packages.
 
 Pick **MesloLGS NF** as the terminal font if the prompt shows boxes. On macOS the
-installer sets it in iTerm2 along with the Kanagawa colours (`bin/iterm2-theme`).
+installer sets it in iTerm2 along with the IntelliJ Dark colours (`bin/iterm2-theme`).
 
 ## Daily use
 
