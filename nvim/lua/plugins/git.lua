@@ -23,7 +23,7 @@ return {
   Plug 'lewis6991/gitsigns.nvim' {
     event = 'VeryLazy',
     config = require('config.git').setup_gitsigns,
-    commit = '39b5b6f', -- v0.10.0-dev, not compatible with v0.9.0
+    version = '^2',  -- v2.x releases; lazy-lock.json pins the exact commit
   };
 
   Plug 'sindrets/diffview.nvim' {

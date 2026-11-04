@@ -146,9 +146,9 @@ function M.setup_gitsigns()
         vim.keymap.set(mode, lhs, rhs, opts)
       end
       -- Navigation
-      map('n', ']c', function() return vim.wo.diff and ']c' or '<Cmd>Gitsigns next_hunk<CR>' end,
+      map('n', ']c', function() return vim.wo.diff and ']c' or '<Cmd>Gitsigns nav_hunk next<CR>' end,
         { expr = true, desc = "goto next hunk (or next diff)" })
-      map('n', '[c', function() return vim.wo.diff and '[c' or '<Cmd>Gitsigns prev_hunk<CR>' end,
+      map('n', '[c', function() return vim.wo.diff and '[c' or '<Cmd>Gitsigns nav_hunk prev<CR>' end,
         { expr = true, desc = "goto previous hunk (or previous diff)" })
       -- Actions
       -- TODO: Also call reload_fugitive_index() after gitsigns operations (even if it's not on the "diff mode")
@@ -158,7 +158,7 @@ function M.setup_gitsigns()
           { desc = 'Stage hunks on the selected range' })
       map('v', '<leader>hr', function() require("gitsigns").reset_hunk({ vim.fn.line("."), vim.fn.line("v") }) end,
           { desc = 'Reset hunks on the selected range' })
-      map('n', '<leader>hu', '<cmd>Gitsigns undo_stage_hunk<CR>')
+      map('n', '<leader>hu', '<cmd>Gitsigns stage_hunk<CR>')  -- on a staged hunk, stage_hunk unstages it
       map('n', '<leader>gU', '<cmd>Gitsigns reset_buffer_index<CR>')  -- Git unstage %
       map('n', '<leader>hp', '<cmd>Gitsigns preview_hunk<CR>')
       map('n', '<leader>hb', '<cmd>lua require"gitsigns".blame_line {full=true, ignore_whitespace=true}<CR>')
@@ -166,7 +166,7 @@ function M.setup_gitsigns()
       map('n', '<leader>tb', '<cmd>Gitsigns toggle_current_line_blame<CR>')
       map('n', '<leader>hd', '<cmd>Gitsigns diffthis<CR>')                    -- Diff against stage
       map('n', '<leader>hD', '<cmd>lua require"gitsigns".diffthis("~")<CR>')  -- Diff against HEAD
-      map('n', '<leader>td', '<cmd>Gitsigns toggle_deleted<CR>')
+      map('n', '<leader>td', '<cmd>Gitsigns preview_hunk_inline<CR>')  -- show deleted lines inline
       -- Text object
       map('o', 'ih', ':<C-U>Gitsigns select_hunk<CR>')
       map('x', 'ih', ':<C-U>Gitsigns select_hunk<CR>')
