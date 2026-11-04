@@ -310,6 +310,12 @@ function M._setup_git_commands()
     vim.cmd.args(vim.tbl_map(function(i) return vim.fn.fnameescape(i.filename) end, items))
     vim.cmd.cfirst()
   end, { nargs = '?', desc = 'Quickfix list of changed files' })
+
+  --- :GDiffMaster — :GDiffFiles against origin's default branch (origin/master, origin/main)
+  vim.api.nvim_create_user_command('GDiffMaster', function()
+    local default = vim.trim(vim.fn.system { 'git', 'rev-parse', '--abbrev-ref', 'origin/HEAD' })
+    vim.cmd.GDiffFiles(vim.v.shell_error == 0 and default or 'origin/master')
+  end, { desc = 'Open every file changed since branching off master' })
 end
 
 --- Reload fugitive:// index buffer upon external edit including gitsigns.
