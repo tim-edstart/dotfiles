@@ -270,6 +270,44 @@ function M._setup_git_commands()
     vim.fn.win_gotoid(win)
     vim.cmd [[ diffoff ]]                -- right: working copy (no diff)
   end, {})
+
+  --- :GDiffFiles [rev]
+  --- Quickfix list of changed files, each at its first hunk; cycle with ]q / [q.
+  --- No rev: uncommitted changes (staged + unstaged) against HEAD.
+  --- With rev: everything since the merge-base with rev, e.g. :GDiffFiles origin/master
+  vim.api.nvim_create_user_command('GDiffFiles', function(e)
+    local root = vim.trim(vim.fn.system { 'git', 'rev-parse', '--show-toplevel' })
+    if vim.v.shell_error ~= 0 then
+      return vim.notify('GDiffFiles: not in a git repository', vim.log.levels.ERROR)
+    end
+    local base = 'HEAD'
+    if e.args ~= '' then
+      base = vim.trim(vim.fn.system { 'git', 'merge-base', e.args, 'HEAD' })
+      if vim.v.shell_error ~= 0 then
+        return vim.notify('GDiffFiles: no merge-base with ' .. e.args, vim.log.levels.ERROR)
+      end
+    end
+
+    local items, file = {}, nil
+    for _, line in ipairs(vim.fn.systemlist { 'git', '-C', root, 'diff', '-U0', '--diff-filter=d', base }) do
+      local path = line:match('^%+%+%+ b/(.+)$')
+      if path then
+        file = path
+      else
+        local lnum = file and line:match('^@@ %-%S+ %+(%d+)')
+        if lnum then
+          table.insert(items, { filename = root .. '/' .. file, lnum = math.max(tonumber(lnum), 1), text = file })
+          file = nil
+        end
+      end
+    end
+
+    if #items == 0 then
+      return vim.notify('GDiffFiles: no changed files', vim.log.levels.INFO)
+    end
+    vim.fn.setqflist({}, ' ', { title = 'git diff ' .. base, items = items })
+    vim.cmd [[ copen | cfirst ]]
+  end, { nargs = '?', desc = 'Quickfix list of changed files' })
 end
 
 --- Reload fugitive:// index buffer upon external edit including gitsigns.
