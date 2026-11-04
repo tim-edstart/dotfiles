@@ -131,6 +131,9 @@ M.parsers_to_install = vim.tbl_flatten {
     "kotlin", "java", "groovy", "typescript", "tsx", "javascript",
     "css", "scss", "sql", "properties", "xml", "dockerfile",
   },
+  { -- the other languages this setup is ready for (LSP via mason, formatters via conform)
+    "rust", "c", "cpp", "cmake", "go", "gomod", "gosum", "toml",
+  },
 }
 
 ---More robust version of has_parser, ignoring neovim core's built-in parsers

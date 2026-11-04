@@ -9,11 +9,23 @@ if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi
 
+# --- PATH ---
+export PATH="$HOME/bin:$HOME/.dotfiles/bin:$HOME/.local/bin:$PATH"
+
 # --- Local, machine-specific config & secrets (gitignored) ---
 [ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
 
-# --- PATH ---
-export PATH="$HOME/bin:$PATH"
+# --- Completion ---
+autoload -Uz compinit && compinit -C
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+
+# --- History: shared across sessions, no duplicates ---
+HISTFILE="$HOME/.zsh_history"; HISTSIZE=100000; SAVEHIST=100000
+setopt share_history hist_ignore_all_dups hist_ignore_space extended_history
+
+# --- Languages: mise manages node, java, python, rust, go (mise/config.toml, plus any .mise.toml or .nvmrc) ---
+command -v mise >/dev/null && eval "$(mise activate zsh)"
 
 # --- pnpm ---
 export PNPM_HOME="$HOME/Library/pnpm"
@@ -26,14 +38,88 @@ esac
 if [ -f "$HOME/google-cloud-sdk/path.zsh.inc" ]; then . "$HOME/google-cloud-sdk/path.zsh.inc"; fi
 if [ -f "$HOME/google-cloud-sdk/completion.zsh.inc" ]; then . "$HOME/google-cloud-sdk/completion.zsh.inc"; fi
 
-# --- nvm ---
+# --- nvm (kept for projects that still expect it; mise reads .nvmrc too) ---
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
 
+# --- Terminal and tmux pane titles: the directory, then "dir ❯ command" while one runs ---
+autoload -Uz add-zsh-hook
+_title_dir() { print -n "\e]2;${(%):-%1~}\a" }
+_title_cmd() { print -n "\e]2;${(%):-%1~} ❯ ${1%% *}\a" }
+add-zsh-hook precmd _title_dir
+add-zsh-hook preexec _title_cmd
+
+# --- fzf keys: Ctrl-R history, Ctrl-T files, Alt-C directories ---
+[[ -t 0 ]] && command -v fzf >/dev/null && { eval "$(fzf --zsh 2>/dev/null)" || true; }
+
 # --- Aliases / functions ---
 # tmux new-session named after the current directory
 tnew() { tmux new-session -s "$(basename "$(pwd)")"; }
+alias ls='ls -G'
+alias ll='ls -lh'
+alias g='git'
+
+# --- dev (bin/dev): run anything, see what is running. Tab completes task names. ---
+_dev() {
+  local -a cmds tasks
+  cmds=(run exec stop restart logs open attach top tasks clean init help)
+  tasks=(${(f)"$(dev _complete 2>/dev/null)"})
+  if (( CURRENT == 2 )); then
+    _describe 'command' cmds
+    _describe 'task' tasks
+  else
+    _describe 'task' tasks
+  fi
+}
+compdef _dev dev
+
+# ---- Claude launchers --------------------------------------------------------
+# Two products x two accounts. The name says which; each prints what it opens.
+#   claude-code-work        Claude Code in this terminal, Edstart account (= plain `claude`)
+#   claude-code-personal    Claude Code in this terminal, personal account
+#   claude-app-work         Claude desktop (chat) app, Edstart account
+#   claude-app-personal     Claude desktop (chat) app, personal account
+#   claude-launchers        print this table
+# Use these instead of the Dock icon when both desktop apps are open: the Dock
+# focuses whichever one happens to be running.
+claude-launchers() {
+  cat <<'TABLE'
+  claude-code-work        Claude Code (terminal)    Edstart account
+  claude-code-personal    Claude Code (terminal)    personal account
+  claude-app-work         Claude desktop chat app   Edstart account
+  claude-app-personal     Claude desktop chat app   personal account
+TABLE
+}
+claude-code-work() {
+  echo ">> Claude Code (terminal) / Edstart account"
+  command claude "$@"
+}
+claude-code-personal() {
+  echo ">> Claude Code (terminal) / personal account"
+  CLAUDE_CONFIG_DIR="$HOME/.claude-personal" command claude "$@"
+}
+_claude_app() {  # $1 account label, $2 profile folder ("" = default profile)
+  local label=$1 profile=$2 pid
+  if [[ -n "$profile" ]]; then
+    pid=$(pgrep -f "MacOS/Claude --user-data-dir=$profile" | head -1)
+  else
+    pid=$(pgrep -f 'MacOS/Claude$' | head -1)
+  fi
+  if [[ -n "$pid" ]]; then
+    echo ">> Claude desktop chat app / $label account: already open, bringing it to the front"
+    osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $pid) to true"
+  else
+    echo ">> Claude desktop chat app / $label account: launching"
+    if [[ -n "$profile" ]]; then
+      open -n -a Claude --args --user-data-dir="$profile"
+    else
+      open -n -a Claude
+    fi
+  fi
+}
+claude-app-work()     { _claude_app "Edstart"  "" }
+claude-app-personal() { _claude_app "personal" "$HOME/Library/Application Support/Claude Personal" }
 
 # --- Prompt: Powerlevel10k, configured in zsh/p10k.zsh (`p10k configure` rewrites it) ---
 for p in /opt/homebrew/share/powerlevel10k /usr/local/share/powerlevel10k "$HOME/.local/share/powerlevel10k"; do

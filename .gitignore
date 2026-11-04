@@ -5,3 +5,5 @@ zsh/.zcompdump*
 .DS_Store
 # nvim runtime state (installed plugins live in ~/.local/share/nvim)
 nvim/.netrwhist
+__pycache__/
+tmux/plugins/

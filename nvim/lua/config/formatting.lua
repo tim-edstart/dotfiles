@@ -66,6 +66,11 @@ function M.setup_conform()
     return { "ktlint" }
   end)()
 
+  cf.rust = { "rustfmt" }
+  cf.go = { "gofmt" }
+  cf.c = { "clang_format" }
+  cf.cpp = { "clang_format" }
+
   for ft, v in pairs(cf) do
     require("conform").formatters_by_ft[ft] = v
   end

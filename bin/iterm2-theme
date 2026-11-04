@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Give iTerm2's default profile the Kanagawa Wave palette, the MesloLGS NF font and the
+Minimal window style. Goes through `defaults`, so a running iTerm2 keeps the change; new
+windows pick it up, existing ones after a restart. Re-running is harmless."""
+import plistlib
+import subprocess
+import sys
+import tempfile
+
+DOMAIN = "com.googlecode.iterm2"
+FONT = "MesloLGS-NF-Regular 13"
+PALETTE = {  # Kanagawa Wave, as rebelot/kanagawa.nvim ships it for terminals
+    "Ansi 0 Color": "090618", "Ansi 1 Color": "C34043", "Ansi 2 Color": "76946A", "Ansi 3 Color": "C0A36E",
+    "Ansi 4 Color": "7E9CD8", "Ansi 5 Color": "957FB8", "Ansi 6 Color": "6A9589", "Ansi 7 Color": "C8C093",
+    "Ansi 8 Color": "727169", "Ansi 9 Color": "E82424", "Ansi 10 Color": "98BB6C", "Ansi 11 Color": "E6C384",
+    "Ansi 12 Color": "7FB4CA", "Ansi 13 Color": "938AA9", "Ansi 14 Color": "7AA89F", "Ansi 15 Color": "DCD7BA",
+    "Background Color": "1F1F28", "Foreground Color": "DCD7BA", "Bold Color": "DCD7BA",
+    "Cursor Color": "C8C093", "Cursor Text Color": "1F1F28", "Cursor Guide Color": "2A2A37",
+    "Selection Color": "2D4F67", "Selected Text Color": "DCD7BA", "Link Color": "7FB4CA", "Badge Color": "E6C384",
+}
+PROFILE = {
+    "Normal Font": FONT, "Non Ascii Font": FONT, "Use Non-ASCII Font": False, "Draw Powerline Glyphs": True,
+    "ASCII Anti Aliased": True, "Non-ASCII Anti Aliased": True, "Use Bold Font": True, "Use Bright Bold": True,
+    "Use Italic Font": True, "Horizontal Spacing": 1.0, "Vertical Spacing": 1.0, "Minimum Contrast": 0.0,
+    "Transparency": 0.0, "Blinking Cursor": False, "Terminal Type": "xterm-256color",
+    "Ambiguous Double Width": False, "Only The Default BG Color Uses Transparency": True,
+}
+GLOBAL = {"TabStyleWithAutomaticOption": 5, "UseBorder": False}  # 5 = Minimal
+
+
+def color(hex6):
+    r, g, b = (int(hex6[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    return {"Color Space": "sRGB", "Red Component": r, "Green Component": g, "Blue Component": b, "Alpha Component": 1.0}
+
+
+def main():
+    exported = subprocess.run(["defaults", "export", DOMAIN, "-"], capture_output=True)
+    if exported.returncode or not exported.stdout:
+        sys.exit("iterm2-theme: iTerm2 has no preferences yet; open it once, then re-run")
+    prefs = plistlib.loads(exported.stdout)
+    profiles = prefs.get("New Bookmarks") or []
+    default = next((p for p in profiles if p.get("Guid") == prefs.get("Default Bookmark Guid")), profiles[0] if profiles else None)
+    if default is None:
+        sys.exit("iterm2-theme: no profile found")
+    for key, hex6 in PALETTE.items():
+        default[key] = color(hex6)
+        for mode in ("Light", "Dark"):  # iTerm2 3.5+ keeps a pair when separate light/dark colours are on
+            if f"{key} ({mode})" in default:
+                default[f"{key} ({mode})"] = color(hex6)
+    default.update(PROFILE)
+    prefs.update(GLOBAL)
+    with tempfile.NamedTemporaryFile(suffix=".plist", delete=False) as f:
+        plistlib.dump(prefs, f)
+    subprocess.run(["defaults", "import", DOMAIN, f.name], check=True)
+    print(f"iTerm2 profile '{default.get('Name', '?')}': Kanagawa colours, {FONT}, minimal tabs. Open a new window to see it.")
+
+
+if __name__ == "__main__":
+    main()

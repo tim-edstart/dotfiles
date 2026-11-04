@@ -1,0 +1,638 @@
+#!/usr/bin/env python3
+"""dev: run anything in a project and see what is running, from one place.
+
+  dev                        status of every task this project knows (same as: dev ps)
+  dev run [task] [-- args]   start a task in its own tmux window; no task opens a picker
+  dev <task> [-- args]       short for: dev run <task>
+  dev exec <name> -- cmd...  run any command as a tracked task called <name>
+  dev stop <task>            stop it (SIGTERM, then SIGKILL after 5s)
+  dev restart <task>
+  dev logs <task> [-f]       the latest log; -f follows it
+  dev open <task>            jump to the task's tmux window
+  dev attach                 attach to the tmux session every task runs in
+  dev top                    live status, refreshed every 2s; q quits
+  dev tasks                  every task and where it comes from
+  dev clean                  close the windows of finished tasks, drop logs older than 14 days
+  dev init                   write a starter .dev.toml here
+
+Tasks come from .dev.toml at the project root (the nearest one above cwd), from
+$DEV_PROJECTS_DIR/*.toml (default ~/.dotfiles/dev/projects) whose `root` is this
+project, and from the project's Makefile, package.json files, Cargo.toml, justfile
+and Gradle application projects. Each run is a tmux window in the `dev` session:
+the window keeps a shell open after the task ends, so its output stays readable.
+State and logs live under ~/.local/state/dev/<project>/.
+"""
+import glob
+import hashlib
+import json
+import os
+import re
+import select
+import shlex
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+SELF = Path(os.path.realpath(sys.argv[0]))
+HOME = Path.home()
+SESSION = os.environ.get("DEV_TMUX_SESSION", "dev")
+PROJECTS_DIR = Path(os.environ.get("DEV_PROJECTS_DIR", HOME / ".dotfiles/dev/projects")).expanduser()
+STATE_ROOT = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "dev"
+OLD_AFTER_DAYS = 7
+COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+# --- small helpers ------------------------------------------------------------
+
+def c(code, text):
+    return f"\033[{code}m{text}\033[0m" if COLOR else str(text)
+
+
+def die(msg, code=1):
+    print(f"dev: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def ago(ts):
+    if not ts:
+        return "-"
+    s = int(time.time() - ts)
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if s >= size:
+            return f"{s // size}{unit} ago"
+    return f"{s}s ago"
+
+
+def duration(a, b):
+    if not a:
+        return "-"
+    s = int((b or time.time()) - a)
+    if s >= 3600:
+        return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+    if s >= 60:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s}s"
+
+
+def alive(pid):
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def run_out(args, cwd=None, check=False):
+    r = subprocess.run(args, cwd=cwd, text=True, capture_output=True)
+    if check and r.returncode:
+        die(f"{' '.join(args)} failed: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+# --- a TOML subset: tables, strings, ints, booleans, string arrays, inline string tables ---
+
+def parse_toml(text):
+    try:
+        import tomllib
+        return tomllib.loads(text)
+    except ImportError:
+        pass
+    root, table = {}, None
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        i += 1
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            table = root
+            for part in line.strip("[]").split("."):
+                table = table.setdefault(part.strip().strip('"'), {})
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip().strip('"'), value.strip()
+        if value.startswith('"""'):
+            body = value[3:]
+            while not body.rstrip().endswith('"""'):
+                body += "\n" + lines[i]
+                i += 1
+            value = body.rstrip()[:-3].lstrip("\n")
+        else:
+            value = toml_value(value)
+        (table if table is not None else root)[key] = value
+    return root
+
+
+def toml_value(v):
+    v = v.split(" #")[0].strip() if not v.startswith(("'", '"')) else v
+    if v.startswith("["):
+        return [toml_value(x) for x in re.findall(r'"[^"]*"|\'[^\']*\'', v)]
+    if v.startswith("{"):
+        return {k.strip().strip('"'): toml_value(x) for k, x in re.findall(r'([\w.-]+)\s*=\s*("[^"]*"|\'[^\']*\')', v)}
+    if v.startswith('"') and v.endswith('"'):
+        return bytes(v[1:-1], "utf-8").decode("unicode_escape")
+    if v.startswith("'") and v.endswith("'"):
+        return v[1:-1]
+    if v in ("true", "false"):
+        return v == "true"
+    try:
+        return int(v)
+    except ValueError:
+        return v
+
+
+# --- project and tasks --------------------------------------------------------
+
+class Project:
+    def __init__(self, cwd=None):
+        cwd = Path(cwd or os.getcwd()).resolve()
+        self.root = self.find_root(cwd)
+        self.name = self.root.name
+        slug = hashlib.sha1(str(self.root).encode()).hexdigest()[:8]
+        self.state = STATE_ROOT / f"{self.name}-{slug}"
+        (self.state / "runs").mkdir(parents=True, exist_ok=True)
+        (self.state / "logs").mkdir(parents=True, exist_ok=True)
+        self.tasks = self.load_tasks()
+
+    @staticmethod
+    def find_root(cwd):
+        for d in (cwd, *cwd.parents):
+            if (d / ".dev.toml").exists():
+                return d
+        for d in (cwd, *cwd.parents):
+            if (d / ".git").exists():
+                return d
+        return cwd
+
+    def load_tasks(self):
+        tasks = {}
+        for name, t in self.discovered().items():
+            tasks[name] = t
+        for src in sorted(PROJECTS_DIR.glob("*.toml")) if PROJECTS_DIR.is_dir() else []:
+            data = parse_toml(src.read_text())
+            root = data.get("root")
+            if root and Path(os.path.expanduser(root)).resolve() == self.root:
+                for name, t in data.get("tasks", {}).items():
+                    tasks[name] = self.task(name, t, f"{src.name}")
+        local = self.root / ".dev.toml"
+        if local.exists():
+            for name, t in parse_toml(local.read_text()).get("tasks", {}).items():
+                tasks[name] = self.task(name, t, ".dev.toml")
+        return dict(sorted(tasks.items()))
+
+    def task(self, name, t, source):
+        if "cmd" not in t:
+            die(f"task {name} in {source} has no cmd")
+        return {
+            "name": name,
+            "cmd": t["cmd"].strip(),
+            "cwd": str((self.root / t.get("cwd", ".")).resolve()),
+            "desc": t.get("desc", ""),
+            "env": {k: str(v) for k, v in t.get("env", {}).items()},
+            "after": list(t.get("after", [])),
+            "group": t.get("group", ""),
+            "source": source,
+        }
+
+    def discovered(self):
+        found = {}
+
+        def add(name, cmd, cwd, desc, group, source):
+            found.setdefault(name, self.task(name, {"cmd": cmd, "cwd": cwd, "desc": desc, "group": group}, source))
+
+        mk = self.root / "Makefile"
+        if mk.exists():
+            prev = ""
+            for line in mk.read_text(errors="replace").splitlines():
+                m = re.match(r"^([A-Za-z0-9][\w.-]*)\s*:(?!=)", line)
+                if m and not line.startswith("."):
+                    add(f"make:{m.group(1)}", f"make {m.group(1)}", ".", prev, "make", "Makefile")
+                prev = line[3:].strip() if line.startswith("## ") else ""
+        for pj in sorted(self.root.glob("package.json")) + sorted(self.root.glob("*/package.json")) + sorted(self.root.glob("*/*/package.json")):
+            if "node_modules" in pj.parts or any(part.startswith(".") for part in pj.relative_to(self.root).parts):
+                continue
+            try:
+                scripts = json.loads(pj.read_text()).get("scripts", {})
+            except (json.JSONDecodeError, OSError):
+                continue
+            rel = pj.parent.relative_to(self.root)
+            prefix = "" if str(rel) == "." else f"{rel.name}:"
+            runner = "pnpm" if (pj.parent / "pnpm-lock.yaml").exists() or any(p.name == "pnpm-lock.yaml" for p in pj.parents[0].glob("pnpm-lock.yaml")) else "npm run"
+            for s, body in scripts.items():
+                if s in ("prepare", "postinstall", "preinstall"):
+                    continue
+                add(f"{prefix}{s}", f"{runner} {s}", str(rel), body[:60], str(rel) if prefix else "npm", pj.relative_to(self.root).as_posix())
+        if (self.root / "Cargo.toml").exists():
+            for s in ("build", "run", "test", "check", "clippy"):
+                add(f"cargo:{s}", f"cargo {s}", ".", "", "cargo", "Cargo.toml")
+        jf = next((p for p in (self.root / "justfile", self.root / "Justfile") if p.exists()), None)
+        if jf:
+            for recipe in run_out(["just", "--summary"], cwd=self.root).split():
+                add(f"just:{recipe}", f"just {recipe}", ".", "", "just", jf.name)
+        if (self.root / "CMakeLists.txt").exists():
+            add("cmake:configure", "cmake -S . -B build", ".", "", "cmake", "CMakeLists.txt")
+            add("cmake:build", "cmake --build build", ".", "", "cmake", "CMakeLists.txt")
+        for settings in list(self.root.glob("settings.gradle*")) + list(self.root.glob("*/settings.gradle*")):
+            gradle_root = settings.parent
+            wrapper = "./gradlew" if (gradle_root / "gradlew").exists() else "gradle"
+            for proj in re.findall(r"""["']([\w:-]+)["']""", settings.read_text(errors="replace")):
+                pdir = gradle_root / proj.replace(":", "/")
+                build = next((b for b in (pdir / "build.gradle.kts", pdir / "build.gradle") if b.exists()), None)
+                if build and "mainClass" in build.read_text(errors="replace"):
+                    name = proj.split(":")[-1]
+                    add(name, f"{wrapper} :{proj}:run", str(gradle_root.relative_to(self.root)), f"gradle :{proj}:run", "gradle", settings.name)
+        return found
+
+    # --- runs ---
+
+    def run_file(self, task):
+        return self.state / "runs" / (re.sub(r"[^\w.-]", "__", task) + ".json")
+
+    def load_run(self, task):
+        f = self.run_file(task)
+        if not f.exists():
+            return None
+        try:
+            run = json.loads(f.read_text())
+        except json.JSONDecodeError:
+            return None
+        if run.get("status") == "running" and not alive(run.get("pid")):
+            run["status"] = "died"
+            run.setdefault("ended", f.stat().st_mtime)
+            self.save_run(run)
+        return run
+
+    def save_run(self, run):
+        tmp = self.run_file(run["task"]).with_suffix(".tmp")
+        tmp.write_text(json.dumps(run, indent=1))
+        tmp.replace(self.run_file(run["task"]))
+
+    def runs(self):
+        out = {}
+        for f in sorted((self.state / "runs").glob("*.json")):
+            try:
+                task = json.loads(f.read_text())["task"]
+            except (json.JSONDecodeError, KeyError):
+                continue
+            out[task] = self.load_run(task)
+        return out
+
+    def git_head(self):
+        return run_out(["git", "-C", str(self.root), "rev-parse", "--short", "HEAD"]) or None
+
+    def changed_since(self, started):
+        """Files git sees as modified whose mtime is after `started`."""
+        changed = []
+        for line in run_out(["git", "-C", str(self.root), "status", "--porcelain", "--untracked-files=normal"]).splitlines():
+            path = self.root / line[3:].split(" -> ")[-1].strip('"')
+            try:
+                if path.is_file() and path.stat().st_mtime > started:
+                    changed.append(path.name)
+            except OSError:
+                pass
+        return changed
+
+
+# --- tmux --------------------------------------------------------------------
+
+def tmux(*args, check=True):
+    base = ["tmux"]
+    if os.environ.get("DEV_TMUX_SOCKET"):
+        base += ["-L", os.environ["DEV_TMUX_SOCKET"]]
+    r = subprocess.run(base + list(args), text=True, capture_output=True)
+    if check and r.returncode:
+        die(f"tmux {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout.strip()
+
+
+def ensure_session():
+    if subprocess.run(["tmux"] + (["-L", os.environ["DEV_TMUX_SOCKET"]] if os.environ.get("DEV_TMUX_SOCKET") else []) + ["has-session", "-t", SESSION], capture_output=True).returncode:
+        tmux("new-session", "-d", "-s", SESSION, "-n", "dev", "-x", "200", "-y", "50")
+        tmux("send-keys", "-t", f"{SESSION}:dev", f"clear; {shlex.quote(str(SELF))} top", "Enter")
+
+
+def window_alive(window_id):
+    return window_id and window_id in tmux("list-windows", "-a", "-F", "#{window_id}", check=False).split()
+
+
+# --- commands -----------------------------------------------------------------
+
+def pick_task(project):
+    rows = [f"{t['name']}\t{t['desc'] or t['cmd']}" for t in project.tasks.values()]
+    if not rows:
+        die("no tasks here: write a .dev.toml (dev init) or a Makefile, package.json, Cargo.toml, justfile")
+    try:
+        r = subprocess.run(["fzf", "--prompt", "dev run > ", "--delimiter", "\t", "--with-nth", "1,2", "--tabstop", "24", "--height", "60%", "--reverse"],
+                           input="\n".join(rows), text=True, capture_output=True)
+        return r.stdout.split("\t")[0].strip() if r.returncode == 0 else None
+    except FileNotFoundError:
+        for i, row in enumerate(rows, 1):
+            print(f"{i:3d}  {row.replace(chr(9), '  ')}")
+        choice = input("run which? ").strip()
+        return rows[int(choice) - 1].split("\t")[0] if choice.isdigit() and 0 < int(choice) <= len(rows) else None
+
+
+def start(project, task, args=None, seen=None):
+    seen = seen or set()
+    if task["name"] in seen:
+        return
+    seen.add(task["name"])
+    for dep in task.get("after", []):
+        if dep not in project.tasks:
+            die(f"{task['name']} runs after {dep}, which is not a task here")
+        dep_run = project.load_run(dep)
+        if not (dep_run and dep_run["status"] == "running"):
+            start(project, project.tasks[dep], seen=seen)
+    run = project.load_run(task["name"])
+    if run and run["status"] == "running":
+        print(f"{task['name']} is already running (pid {run['pid']}, since {ago(run['started'])}); dev open {task['name']}")
+        return
+    ensure_session()
+    cmd = task["cmd"] + (" " + " ".join(shlex.quote(a) for a in args) if args else "")
+    log = project.state / "logs" / re.sub(r"[^\w.-]", "__", task["name"]) / (datetime.now().strftime("%Y%m%d-%H%M%S") + ".log")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    window = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", f"{SESSION}:", "-n", task["name"].replace(":", "·"), "-c", task["cwd"])
+    project.save_run({
+        "task": task["name"], "cmd": cmd, "cwd": task["cwd"], "env": task.get("env", {}), "status": "starting",
+        "window": window, "log": str(log), "started": time.time(), "pid": None, "git_head": project.git_head(),
+    })
+    tmux("send-keys", "-t", window, f"clear; {shlex.quote(str(SELF))} _exec {shlex.quote(task['name'])} {shlex.quote(str(project.root))}", "Enter")
+    print(f"started {c('1', task['name'])} in tmux window {window}: {cmd}")
+
+
+def cmd_exec_inner(project, name):
+    """Runs inside the task's tmux window: tee output to the log and record the outcome."""
+    run = project.load_run(name) or die(f"no run recorded for {name}")
+    env = dict(os.environ, **run.get("env", {}))
+    log = open(run["log"], "ab", buffering=0)
+    print(c("2", f"── dev: {name} · {run['cwd']}\n── {run['cmd']}"))
+    child = subprocess.Popen([os.environ.get("SHELL", "/bin/sh"), "-c", run["cmd"]], cwd=run["cwd"], env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    run.update(status="running", pid=child.pid, started=time.time())
+    project.save_run(run)
+
+    def forward(signum, _frame):
+        try:
+            os.killpg(child.pid, signum)
+        except ProcessLookupError:
+            pass
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, forward)
+    while True:
+        chunk = child.stdout.read1(65536) if hasattr(child.stdout, "read1") else child.stdout.read(65536)
+        if not chunk:
+            break
+        log.write(chunk)
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+    code = child.wait()
+    run.update(status="exited", exit_code=code, ended=time.time())
+    project.save_run(run)
+    verdict = "ok" if code == 0 else ("stopped" if code < 0 else f"exit {code}")
+    footer = f"── dev: {name} {verdict} after {duration(run['started'], run['ended'])} · log: {run['log']}"
+    print(c("32" if code == 0 else "31", footer))
+    log.write((footer + "\n").encode())
+    return code
+
+
+def cmd_stop(project, name, quiet=False):
+    run = project.load_run(name)
+    if not (run and run["status"] == "running"):
+        if not quiet:
+            print(f"{name} is not running")
+        return
+    pid = run["pid"]
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    for _ in range(50):
+        if not alive(pid):
+            break
+        time.sleep(0.1)
+    else:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    print(f"stopped {name}")
+
+
+def listening_ports(pgid):
+    pids = [p.split()[0] for p in run_out(["ps", "-axo", "pid=,pgid="]).splitlines() if len(p.split()) == 2 and p.split()[1] == str(pgid)]
+    if not pids:
+        return []
+    out = run_out(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", ",".join(pids), "-Fn"])
+    return sorted({m for m in re.findall(r"^n.*:(\d+)$", out, re.M)}, key=int)
+
+
+def status_rows(project):
+    runs = project.runs()
+    names = sorted(set(project.tasks) | set(runs))
+    head = project.git_head()
+    rows = []
+    for name in names:
+        task = project.tasks.get(name)
+        run = runs.get(name)
+        group = (task or {}).get("group", "") or ("ad hoc" if not task else "")
+        if not run:
+            rows.append((group, name, c("2", "never"), "-", "-", "", c("2", (task or {}).get("desc", ""))))
+            continue
+        st = run["status"]
+        note = []
+        if st == "running":
+            state = c("32", "● running")
+            ports = ",".join(listening_ports(run["pid"]))
+            if head and run.get("git_head") and head != run["git_head"]:
+                note.append(c("33", f"new commit {head} since start"))
+            changed = project.changed_since(run["started"])
+            if changed:
+                note.append(c("33", f"edited since start: {', '.join(changed[:3])}{'…' if len(changed) > 3 else ''}"))
+            rows.append((group, name, state, ago(run["started"]), duration(run["started"], None), ports, " · ".join(note)))
+        else:
+            if st == "died":
+                state = c("31", "✗ died")
+            elif st == "starting":
+                state = c("33", "… starting")
+            elif run.get("exit_code", 0) == 0:
+                state = c("32", "✓ ok")
+            elif run.get("exit_code", 0) < 0:
+                state = c("2", "■ stopped")
+            else:
+                state = c("31", f"✗ exit {run.get('exit_code')}")
+            ended = run.get("ended")
+            if ended and time.time() - ended > OLD_AFTER_DAYS * 86400:
+                note.append(c("2", "old run"))
+            rows.append((group, name, state, ago(ended or run["started"]), duration(run["started"], ended), "", " · ".join(note) or c("2", (task or {}).get("desc", ""))))
+    return rows
+
+
+def visible_len(s):
+    return len(re.sub(r"\033\[[0-9;]*m", "", s))
+
+
+def pad(s, n):
+    return s + " " * max(0, n - visible_len(s))
+
+
+def cmd_status(project):
+    rows = status_rows(project)
+    if not rows:
+        print(f"{project.name}: no tasks. dev init writes a .dev.toml; dev exec <name> -- <cmd> runs anything.")
+        return
+    header = ("GROUP", "TASK", "STATE", "WHEN", "FOR", "PORTS", "NOTE")
+    widths = [max(visible_len(str(r[i])) for r in rows + [header]) for i in range(6)]
+    print(c("1", f"{project.name}") + c("2", f"  {project.root}  ·  tmux session {SESSION}"))
+    print(c("2", "  ".join(pad(h, w) for h, w in zip(header, widths)) + "  NOTE"))
+    for r in rows:
+        print("  ".join(pad(str(v), w) for v, w in zip(r[:6], widths)) + "  " + r[6])
+
+
+def cmd_top(project):
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        while True:
+            sys.stdout.write("\033[2J\033[H")
+            cmd_status(project)
+            print(c("2", "\nq quit · r run a task · every 2s"))
+            sys.stdout.flush()
+            r, _, _ = select.select([sys.stdin], [], [], 2)
+            if r:
+                key = sys.stdin.read(1)
+                if key == "q":
+                    return
+                if key == "r":
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                    name = pick_task(project)
+                    if name:
+                        start(project, project.tasks[name])
+                        time.sleep(1)
+                    tty.setcbreak(fd)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def cmd_logs(project, name, follow):
+    run = project.load_run(name) or die(f"{name} has never run here")
+    if follow:
+        os.execvp("tail", ["tail", "-n", "100", "-f", run["log"]])
+    lines = Path(run["log"]).read_text(errors="replace").splitlines()
+    print("\n".join(lines[-200:]))
+
+
+def cmd_open(project, name):
+    run = project.load_run(name) or die(f"{name} has never run here")
+    if not window_alive(run.get("window")):
+        die(f"{name}'s window is gone; dev logs {name} still has its output")
+    if os.environ.get("TMUX"):
+        tmux("switch-client", "-t", run["window"])
+    else:
+        os.execvp("tmux", ["tmux", "attach", "-t", SESSION, ";", "select-window", "-t", run["window"]])
+
+
+def cmd_clean(project):
+    closed = 0
+    for name, run in project.runs().items():
+        if run["status"] != "running" and window_alive(run.get("window")):
+            tmux("kill-window", "-t", run["window"], check=False)
+            closed += 1
+    dropped = 0
+    cutoff = time.time() - 14 * 86400
+    for log in (project.state / "logs").rglob("*.log"):
+        if log.stat().st_mtime < cutoff:
+            log.unlink()
+            dropped += 1
+    print(f"closed {closed} finished windows, dropped {dropped} old logs")
+
+
+def cmd_tasks(project):
+    for t in project.tasks.values():
+        print(f"{c('1', t['name']):<40} {c('2', t['source']):<30} {t['cmd']}")
+
+
+def cmd_init(project):
+    f = Path.cwd() / ".dev.toml"
+    if f.exists():
+        die(f"{f} exists")
+    f.write_text('''# Tasks for `dev`. Run one with `dev <task>`, see them all with `dev`.
+#
+# [tasks.server]
+# desc = "API on :8080"
+# cmd = "make run"            # runs in your login shell, so aliases, PATH and secrets apply
+# cwd = "backend"             # relative to this file
+# env = { PORT = "8080" }
+# after = ["db"]              # tasks to start first when they are not running
+# group = "backend"           # groups rows in the status table
+''')
+    print(f"wrote {f}")
+
+
+def main(argv):
+    if argv and argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    if argv and argv[0] == "_exec":
+        project = Project(argv[2])
+        sys.exit(cmd_exec_inner(project, argv[1]))
+    project = Project()
+    if argv and argv[0] == "_complete":
+        print("\n".join(sorted(set(project.tasks) | set(project.runs()))))
+        return
+    if not argv or argv[0] in ("ps", "status"):
+        return cmd_status(project)
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "run":
+        name = rest[0] if rest and rest[0] != "--" else pick_task(project)
+        if not name:
+            return
+        args = rest[rest.index("--") + 1:] if "--" in rest else []
+        return start(project, project.tasks.get(name) or die(f"no task {name}; dev tasks lists them"), args)
+    if cmd == "exec":
+        if "--" not in rest or rest.index("--") != 1:
+            die("usage: dev exec <name> -- <command...>")
+        name, command = rest[0], " ".join(shlex.quote(a) for a in rest[2:])
+        task = project.task(name, {"cmd": command, "cwd": os.path.relpath(os.getcwd(), project.root)}, "ad hoc")
+        return start(project, task)
+    if cmd in ("stop", "restart", "logs", "open"):
+        if not rest:
+            die(f"usage: dev {cmd} <task>")
+        name = rest[0]
+        if cmd == "stop":
+            return cmd_stop(project, name)
+        if cmd == "restart":
+            cmd_stop(project, name, quiet=True)
+            return start(project, project.tasks.get(name) or die(f"no task {name}"))
+        if cmd == "logs":
+            return cmd_logs(project, name, "-f" in rest)
+        return cmd_open(project, name)
+    if cmd == "attach":
+        ensure_session()
+        os.execvp("tmux", ["tmux", "attach", "-t", SESSION])
+    if cmd == "top":
+        return cmd_top(project)
+    if cmd == "tasks":
+        return cmd_tasks(project)
+    if cmd == "clean":
+        return cmd_clean(project)
+    if cmd == "init":
+        return cmd_init(project)
+    if cmd in project.tasks:
+        args = rest[rest.index("--") + 1:] if "--" in rest else rest
+        return start(project, project.tasks[cmd], args)
+    die(f"unknown command or task: {cmd}. dev help lists commands, dev tasks lists tasks")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

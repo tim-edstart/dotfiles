@@ -1,0 +1,8 @@
+# Global tool versions, installed by `mise install` (install.sh runs it). A project's own
+# .mise.toml, .tool-versions, .nvmrc or .java-version wins inside that project.
+[tools]
+node = ["lts", "18"]   # 18 for the platform web projects (.nvmrc)
+python = "3.12"
+java = "corretto-21"
+rust = "stable"
+go = "latest"

@@ -161,6 +161,7 @@ local auto_lsp_servers = {
   ['cssls'] = true,
   ['clangd'] = true,
   ['rust_analyzer'] = true,
+  ['gopls'] = true,
   ['texlab'] = true,
   ['yamlls'] = true,
   ['taplo'] = true,  -- toml

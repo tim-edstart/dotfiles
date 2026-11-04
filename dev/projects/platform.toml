@@ -1,0 +1,87 @@
+# Tasks for the Edstart platform monorepo. `dev` picks this file up because `root` matches.
+root = "~/IdeaProjects/platform"
+
+[tasks.db]
+desc = "Postgres 15 in Docker on 54329"
+cmd = "/Applications/Docker.app/Contents/Resources/bin/docker start sad_villani && /Applications/Docker.app/Contents/Resources/bin/docker logs -f --tail 20 sad_villani"
+group = "infra"
+
+[tasks.admin]
+desc = "Admin server"
+cmd = "./gradlew :services:admin:run"
+cwd = "servers"
+after = ["db"]
+group = "servers"
+env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+
+[tasks.apply]
+desc = "Apply server"
+cmd = "./gradlew :services:apply:run"
+cwd = "servers"
+after = ["db"]
+group = "servers"
+env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+
+[tasks.calc]
+desc = "Calc server"
+cmd = "./gradlew :services:calc:run"
+cwd = "servers"
+after = ["db"]
+group = "servers"
+env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+
+[tasks.login]
+desc = "Login server"
+cmd = "./gradlew :services:login:run"
+cwd = "servers"
+after = ["db"]
+group = "servers"
+env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+
+[tasks.workflow]
+desc = "Workflow server"
+cmd = "./gradlew :services:workflow:run"
+cwd = "servers"
+after = ["db"]
+group = "servers"
+env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+
+[tasks.compile]
+desc = "Compile servers and their tests (cheaper than build)"
+cmd = "./gradlew compileTestJava"
+cwd = "servers"
+group = "servers"
+env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+
+[tasks.test]
+desc = "Admin tests against the Docker Postgres: dev test -- --tests '*SomeTest*'"
+cmd = "./gradlew :services:admin:test --max-workers=2"
+cwd = "servers"
+after = ["db"]
+group = "servers"
+env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home", EDSTART_DB_HOST = "localhost", EDSTART_DB_PORT = "54329", EDSTART_DB_NAME = "edstart", EDSTART_DB_USER = "postgres", EDSTART_DB_PWD = "postgres", DB_HOST = "localhost", DB_PORT = "54329", DB_NAME = "edstart", DB_USER = "postgres", DB_PWD = "postgres" }
+
+[tasks.lint]
+desc = "ktlint over staged files (bin/lint -s)"
+cmd = "bin/lint -s"
+cwd = "servers"
+group = "servers"
+env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+
+[tasks.admin-ui]
+desc = "Admin front end (pnpm dev)"
+cmd = "pnpm dev"
+cwd = "admin/projects/admin"
+group = "web"
+
+[tasks.portal]
+desc = "Customer portal (pnpm dev)"
+cmd = "pnpm dev"
+cwd = "web/projects/customer-portal"
+group = "web"
+
+[tasks.partner-portal]
+desc = "Partner portal (pnpm dev)"
+cmd = "pnpm dev"
+cwd = "web/projects/partner-portal"
+group = "web"
