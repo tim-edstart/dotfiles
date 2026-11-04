@@ -112,7 +112,7 @@ return {
 
   -- Other languages
   Plug 'editorconfig/editorconfig-vim' { cond = not has('nvim') };
-  Plug 'sheerun/vim-polyglot' { version = 'v4.2.1' };
+  Plug 'sheerun/vim-polyglot' { version = '^4' };  -- v4.x; last release v4.17.1 (2022)
   Plug 'tmux-plugins/vim-tmux' { ft = 'tmux' };
   Plug 'fladson/vim-kitty' { ft = 'kitty' };
   Plug 'lervag/vimtex' { init = require('config.tex').init, config = require('config.tex').setup };

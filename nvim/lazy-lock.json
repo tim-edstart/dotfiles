@@ -93,7 +93,7 @@
   "vim-maximizer": { "branch": "master", "commit": "2e54952fe91e140a2e69f35f22131219fcd9c5f1" },
   "vim-peekaboo": { "branch": "master", "commit": "2a8a3187ba6b15201b2563a3f0331fcdf49da36c" },
   "vim-plist": { "branch": "master", "commit": "aa781a387c70a9ea30cbce8da988e19693f5aaec" },
-  "vim-polyglot": { "branch": "master", "commit": "35ea4d2b9072594b6c0ccf87bde7978ed9f94755" },
+  "vim-polyglot": { "branch": "master", "commit": "1d1f36b24ea601eb950865982e05b875aa702330" },
   "vim-quickhl": { "branch": "master", "commit": "be1f44169c3fdee3beab629e83380515da03835e" },
   "vim-quickui": { "branch": "master", "commit": "48aaa496633eb39eb8759921386e29e9867fb623" },
   "vim-repeat": { "branch": "master", "commit": "65846025c15494983dafe5e3b46c8f88ab2e9635" },
