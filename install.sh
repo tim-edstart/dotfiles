@@ -40,7 +40,13 @@ install_deps() {
   local core="neovim tmux git ripgrep fzf"
   if [[ "$OS" == "Darwin" ]]; then
     command -v brew >/dev/null 2>&1 || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    brew install $core fd || true
+    brew install $core fd powerlevel10k || true
+    # MesloLGS NF: the Nerd Font the Powerlevel10k prompt and tmux status bar draw with.
+    # Set it as the terminal font afterwards (iTerm2: Profiles > Text > Font).
+    local f; for f in Regular Bold Italic "Bold Italic"; do
+      [[ -f "$HOME/Library/Fonts/MesloLGS NF $f.ttf" ]] || curl -fsSL -o "$HOME/Library/Fonts/MesloLGS NF $f.ttf" \
+        "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20${f// /%20}.ttf" || true
+    done
     # GUI terminals + fonts only make sense on desktop macOS
     brew install --cask alacritty kitty wezterm font-open-sans || true
   elif command -v apt-get >/dev/null 2>&1; then
@@ -56,6 +62,11 @@ install_deps() {
   else
     warn "No known package manager found — install $core manually."
   fi
+  # Powerlevel10k on Linux comes from git; the prompt falls back to plain zsh if it is missing.
+  if [[ "$OS" != "Darwin" && ! -d "$HOME/.local/share/powerlevel10k" ]]; then
+    git clone --depth 1 https://github.com/romkatv/powerlevel10k "$HOME/.local/share/powerlevel10k" || true
+    warn "install a Nerd Font (MesloLGS NF) in your terminal for the prompt glyphs"
+  fi
 }
 
 [[ "$WITH_DEPS" == 1 ]] && { info "installing core tools"; install_deps; }
@@ -65,6 +76,7 @@ link nvim              "$HOME/.config/nvim"
 link tmux/tmux.conf    "$HOME/.tmux.conf"
 link zsh/zshrc         "$HOME/.zshrc"
 link zsh/zshenv        "$HOME/.zshenv"
+link zsh/p10k.zsh      "$HOME/.p10k.zsh"
 link git/gitconfig     "$HOME/.gitconfig"
 [[ -f "$DOTFILES/git/gitignore_global" ]] && link git/gitignore_global "$HOME/.gitignore_global"
 

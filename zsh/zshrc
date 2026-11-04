@@ -4,6 +4,11 @@
 # NOT tracked by this repo. Copy zsh/zshrc.local.example to ~/.zshrc.local
 # and fill it in. See README.
 
+# --- Prompt: Powerlevel10k instant prompt (keep above anything that prints) ---
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
 # --- Local, machine-specific config & secrets (gitignored) ---
 [ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
 
@@ -29,3 +34,9 @@ export NVM_DIR="$HOME/.nvm"
 # --- Aliases / functions ---
 # tmux new-session named after the current directory
 tnew() { tmux new-session -s "$(basename "$(pwd)")"; }
+
+# --- Prompt: Powerlevel10k, configured in zsh/p10k.zsh (`p10k configure` rewrites it) ---
+for p in /opt/homebrew/share/powerlevel10k /usr/local/share/powerlevel10k "$HOME/.local/share/powerlevel10k"; do
+  [ -r "$p/powerlevel10k.zsh-theme" ] && { source "$p/powerlevel10k.zsh-theme"; break; }
+done
+[ -f "$HOME/.p10k.zsh" ] && source "$HOME/.p10k.zsh"

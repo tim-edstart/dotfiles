@@ -27,6 +27,7 @@ would replace is moved to `<file>.bak-<timestamp>` first.
 | `tmux/tmux.conf` | `~/.tmux.conf` | tpm + resurrect/continuum; installer clones tpm |
 | `zsh/zshrc` | `~/.zshrc` | secrets sourced from `~/.zshrc.local` (see below) |
 | `zsh/zshenv` | `~/.zshenv` | |
+| `zsh/p10k.zsh` | `~/.p10k.zsh` | Powerlevel10k prompt; `--deps` installs it and the MesloLGS NF font, then pick that font in the terminal |
 | `git/gitconfig` | `~/.gitconfig` | uses `gh` as the credential helper |
 | `terminal/{alacritty,kitty,wezterm}` | `~/.config/*` | desktop only; skipped on WSL |
 | `bin/kotlin-lsp-update` | — | reinstalls JetBrains' kotlin-lsp when a build expires; nvim runs it itself |
