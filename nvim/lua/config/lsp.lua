@@ -676,9 +676,9 @@ function M._setup_lsp_handlers()
   -- :help lsp-handler
   -- :help lsp-handler-configuration
   --  https://github.com/neovim/nvim-lspconfig/wiki/UI-Customization
-  local lsp_handlers_hover = vim.lsp.with(vim.lsp.handlers.hover, {
-    border = 'single'
-  })
+  local lsp_handlers_hover = function(err, result, ctx, config)  -- vim.lsp.with() is deprecated since 0.11
+    return vim.lsp.handlers.hover(err, result, ctx, vim.tbl_extend('force', config or {}, { border = 'single' }))
+  end
   vim.lsp.handlers["textDocument/hover"] = function(err, result, ctx, config)
     local bufnr, winnr = lsp_handlers_hover(err, result, ctx, config)
     if winnr ~= nil then

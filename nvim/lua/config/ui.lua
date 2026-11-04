@@ -11,8 +11,12 @@ function M.setup_extui()
     return false
   end
 
+  local has_extui, extui = pcall(require, 'vim._extui')  -- the module moved between 0.12 builds
+  if not has_extui then
+    return false
+  end
   vim.schedule(function()
-    require('vim._extui').enable {
+    extui.enable {
       enable = true,
       msg = {
         target = 'cmd', -- for now I'm happy with 'cmd'; 'box' seems buggy
