@@ -272,7 +272,8 @@ function M._setup_git_commands()
   end, {})
 
   --- :GDiffFiles [rev]
-  --- Quickfix list of changed files, each at its first hunk; cycle with ]q / [q.
+  --- Opens every changed file as a buffer (also the arglist and quickfix list).
+  --- ]q / [q jump to each file's first hunk; :bn / :bp or ]a / [a also cycle.
   --- No rev: uncommitted changes (staged + unstaged) against HEAD.
   --- With rev: everything since the merge-base with rev, e.g. :GDiffFiles origin/master
   vim.api.nvim_create_user_command('GDiffFiles', function(e)
@@ -306,7 +307,8 @@ function M._setup_git_commands()
       return vim.notify('GDiffFiles: no changed files', vim.log.levels.INFO)
     end
     vim.fn.setqflist({}, ' ', { title = 'git diff ' .. base, items = items })
-    vim.cmd [[ copen | cfirst ]]
+    vim.cmd.args(vim.tbl_map(function(i) return vim.fn.fnameescape(i.filename) end, items))
+    vim.cmd.cfirst()
   end, { nargs = '?', desc = 'Quickfix list of changed files' })
 end
 
