@@ -9,7 +9,7 @@ OUT="$(mktemp -t nvim-check)"
 SAMPLE="$HOME/.dotfiles/nvim/init.lua"
 before=$(wc -l <"$LOG" 2>/dev/null || echo 0)
 
-perl -e 'alarm 90; exec @ARGV' nvim --headless "$SAMPLE" -c "lua
+perl -e 'alarm 60; exec @ARGV' nvim --headless "$SAMPLE" -c "lua
   local out, errs = '$OUT', {}
   local function try(what, fn)
     local ok, err = pcall(fn)
@@ -29,6 +29,8 @@ perl -e 'alarm 90; exec @ARGV' nvim --headless "$SAMPLE" -c "lua
     if line:match('E%d+:') or line:match('[Ee]rror') then table.insert(errs, 'message: ' .. line) end
   end
   vim.fn.writefile(errs, out)
+  -- close the fzf picker, or :qa waits on it forever
+  pcall(function() require('fzf-lua.win').__SELF():close() end)
 " -c 'qa!' </dev/null >/dev/null 2>&1
 status=$?
 
