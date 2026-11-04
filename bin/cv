@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Open a Claude app session's worktree in Neovim, in its own tmux window.
+
+  cv          pick a session with fzf (newest first), then open it
+  cv <dir>    open that directory (the Claude skill /nvim runs `cv "$PWD"`)
+
+Neovim starts with the branch's changed files (against the merge base with the default
+branch) in the quickfix list: ]q / [q walk them, ,gd diffs one. A second `cv` on the same
+worktree switches to its window instead of opening another. Run from outside tmux (e.g.
+from the Claude app), it opens the window in your most recent tmux session and brings
+iTerm2 to the front."""
+import glob
+import json
+import os
+import shlex
+import subprocess
+import sys
+import time
+
+SESSIONS = os.path.expanduser("~/Library/Application Support/Claude/claude-code-sessions/*/*/local_*.json")
+
+
+def git(cwd, *args):
+    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def ago(ms):
+    s = time.time() - ms / 1000
+    for unit, n in (("d", 86400), ("h", 3600), ("m", 60)):
+        if s >= n:
+            return f"{int(s // n)}{unit}"
+    return "now"
+
+
+def worktrees(repo, cache={}):
+    """branch -> worktree path, for every worktree of repo."""
+    if repo not in cache:
+        cache[repo], path = {}, None
+        for line in git(repo, "worktree", "list", "--porcelain").splitlines():
+            if line.startswith("worktree "):
+                path = line[9:]
+            elif line.startswith("branch refs/heads/"):
+                cache[repo][line[18:]] = path
+    return cache[repo]
+
+
+def sessions():
+    """(repo, branch) pairs the Claude app sessions worked on, newest session first.
+    A session's branches come from the branches it wrote, its open PRs and its worktree."""
+    found = {}
+    for f in glob.glob(SESSIONS):
+        try:
+            d = json.load(open(f))
+        except (OSError, ValueError):
+            continue
+        if d.get("isArchived"):
+            continue
+        anchors = d.get("gitAnchors") or []
+        repo = anchors[0]["gitRoot"] if anchors else d.get("cwd") or ""
+        pairs = [tuple(w.split("\0", 1)) for w in d.get("writtenBranches") or [] if "\0" in w]
+        pairs += [(repo, p["branch"], p.get("prNumber"), p.get("state")) for p in d.get("prs") or [] if p.get("branch")]
+        if d.get("worktreePath") and d.get("branch"):
+            pairs.append((repo, d["branch"]))
+        ts = int(d.get("lastActivityAt") or 0)
+        for repo_, branch, *pr in pairs:
+            if branch in ("master", "main") or not os.path.isdir(repo_):
+                continue
+            key = (repo_, branch)
+            old = found.get(key)
+            if old and old[0] >= ts and (old[3] or not pr):
+                continue
+            found[key] = (ts, d.get("title") or "(untitled)", pr[0] if pr else None, pr[1] if pr else None)
+    for (repo, branch), (ts, title, pr, state) in sorted(found.items(), key=lambda kv: -kv[1][0]):
+        if state in ("MERGED", "CLOSED"):
+            continue
+        path = worktrees(repo).get(branch)
+        if not path and not git(repo, "rev-parse", "--verify", "-q", f"refs/heads/{branch}"):
+            continue  # branch deleted
+        mark = "●" if path else "○"
+        prs = f"#{pr} " if pr else ""
+        yield f"{ago(ts):>4} {mark} {branch[:44]:<44}  {prs}{title}\t{repo}\t{branch}\t{path or ''}"
+
+
+def pick():
+    preview = ("git -C {2} log --oneline --color -8 {3} --not $(git -C {2} symbolic-ref --short "
+               "refs/remotes/origin/HEAD 2>/dev/null || echo origin/master); echo; "
+               "[ -n {4} ] && git -C {4} -c color.ui=always status --short | head -30 || echo '(no worktree yet: one is made on open)'")
+    r = subprocess.run(["fzf", "--ansi", "--delimiter=\t", "--with-nth=1", "--no-sort",
+                        "--header=Claude session branches, newest first  (● has a worktree, ○ one gets made)", "--preview", preview,
+                        "--preview-window=down,45%"],
+                       input="\n".join(sessions()), capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    _, repo, branch, path = r.stdout.rstrip("\n").split("\t")
+    if path:
+        return path
+    path = os.path.join(repo, ".claude", "worktrees", "review-" + branch.replace("/", "-"))
+    subprocess.run(["git", "-C", repo, "worktree", "add", "-q", path, branch], check=True)
+    return path
+
+
+def base_ref(cwd):
+    head = git(cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD") or "origin/master"
+    return git(cwd, "merge-base", "HEAD", head)
+
+
+def tmux(*args):
+    return subprocess.run(["tmux", *args], capture_output=True, text=True)
+
+
+def open_in_tmux(root):
+    name = git(root, "branch", "--show-current").removeprefix("claude/").removeprefix("worktree-") \
+        or os.path.basename(root)
+    inside = bool(os.environ.get("TMUX"))
+    if not inside and tmux("has-session").returncode != 0:
+        tmux("new-session", "-d", "-s", "0")
+
+    # already open? switch to it
+    for line in tmux("list-windows", "-a", "-F", "#{session_name}:#{window_index}\t#{@cv_root}").stdout.splitlines():
+        target, _, r = line.partition("\t")
+        if r == root:
+            tmux("select-window", "-t", target)
+            return target
+
+    base = base_ref(root)
+    cmd = "nvim"
+    if base:  # changed files of the branch, plus uncommitted ones, into the quickfix list
+        lua = ("lua local f = vim.fn.systemlist({'git', 'diff', '--name-only', '--relative', '%s'}) "
+               "vim.fn.setqflist({}, ' ', {title = 'changed since %s', items = vim.tbl_map("
+               "function(n) return {filename = n, lnum = 1} end, f)}) "
+               "if #f > 0 then vim.cmd('silent! cfirst') end" % (base, base[:8]))
+        cmd += " -c " + shlex.quote(lua)
+    args = ["new-window", "-P", "-F", "#{session_name}:#{window_index}", "-n", name[:24], "-c", root]
+    if not inside:
+        last = tmux("list-sessions", "-F", "#{session_last_attached} #{session_name}").stdout.split("\n")
+        session = max(last, key=lambda l: int(l.split(" ")[0] or 0)).split(" ", 1)[1]
+        args += ["-t", f"{session}:"]
+    target = tmux(*args, f"exec {cmd}").stdout.strip()
+    tmux("set-option", "-w", "-t", target, "@cv_root", root)
+    return target
+
+
+def main():
+    path = sys.argv[1] if len(sys.argv) > 1 else pick()
+    if not path:
+        return
+    root = git(os.path.abspath(path), "rev-parse", "--show-toplevel")
+    if not root:
+        sys.exit(f"cv: {path} is not in a git repository")
+    target = open_in_tmux(root)
+    if not os.environ.get("TMUX"):
+        subprocess.run(["open", "-a", "iTerm"])
+    print(f"cv: {root} → tmux {target}")
+
+
+if __name__ == "__main__":
+    main()

@@ -102,6 +102,7 @@ link zsh/zshenv        "$HOME/.zshenv"
 link zsh/p10k.zsh      "$HOME/.p10k.zsh"
 link git/gitconfig     "$HOME/.gitconfig"
 link mise/config.toml  "$HOME/.config/mise/config.toml"
+link claude/skills/nvim "$HOME/.claude/skills/nvim"
 [[ -f "$DOTFILES/git/gitignore_global" ]] && link git/gitignore_global "$HOME/.gitignore_global"
 
 # Terminal emulator configs: desktop only. On WSL the GUI terminal runs on
