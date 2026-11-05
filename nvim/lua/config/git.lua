@@ -272,8 +272,7 @@ function M._setup_git_commands()
   end, {})
 
   --- :GDiffFiles [rev]
-  --- Opens every changed file as a buffer (also the arglist and quickfix list).
-  --- ]q / [q jump to each file's first hunk; :bn / :bp or ]a / [a also cycle.
+  --- Loops through changed files one at a time with ]q / [q, each at its first hunk.
   --- No rev: uncommitted changes (staged + unstaged) against HEAD.
   --- With rev: everything since the merge-base with rev, e.g. :GDiffFiles origin/master
   vim.api.nvim_create_user_command('GDiffFiles', function(e)
@@ -307,11 +306,27 @@ function M._setup_git_commands()
       return vim.notify('GDiffFiles: no changed files', vim.log.levels.INFO)
     end
     vim.fn.setqflist({}, ' ', { title = 'git diff ' .. base, items = items })
-    vim.cmd.args(vim.tbl_map(function(i) return vim.fn.fnameescape(i.filename) end, items))
+
+    -- Show one file at a time: unlist each file when leaving it, unless it has unsaved edits
+    local group = vim.api.nvim_create_augroup('gdiff-files', { clear = true })
+    for _, item in ipairs(vim.fn.getqflist()) do
+      vim.api.nvim_create_autocmd('BufLeave', {
+        buffer = item.bufnr, group = group,
+        callback = function(ev)
+          if not vim.bo[ev.buf].modified then
+            vim.schedule(function() vim.bo[ev.buf].buflisted = false end)
+          end
+        end,
+      })
+    end
     vim.cmd.cfirst()
   end, { nargs = '?', desc = 'Quickfix list of changed files' })
 
-  --- :GDiffMaster — :GDiffFiles against origin's default branch (origin/master, origin/main)
+  -- ]q / [q wrap around at the ends of the quickfix list
+  vim.keymap.set('n', ']q', '<Cmd>try | cnext | catch /E553/ | cfirst | endtry<CR>', { desc = 'Next quickfix item (wraps)' })
+  vim.keymap.set('n', '[q', '<Cmd>try | cprevious | catch /E553/ | clast | endtry<CR>', { desc = 'Previous quickfix item (wraps)' })
+
+  --- :GDiffMaster —:GDiffFiles against origin's default branch (origin/master, origin/main)
   vim.api.nvim_create_user_command('GDiffMaster', function()
     local default = vim.trim(vim.fn.system { 'git', 'rev-parse', '--abbrev-ref', 'origin/HEAD' })
     vim.cmd.GDiffFiles(vim.v.shell_error == 0 and default or 'origin/master')
