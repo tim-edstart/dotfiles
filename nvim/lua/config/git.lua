@@ -322,10 +322,6 @@ function M._setup_git_commands()
     vim.cmd.cfirst()
   end, { nargs = '?', desc = 'Quickfix list of changed files' })
 
-  -- ]q / [q wrap around at the ends of the quickfix list
-  vim.keymap.set('n', ']q', '<Cmd>try | cnext | catch /E553/ | cfirst | endtry<CR>', { desc = 'Next quickfix item (wraps)' })
-  vim.keymap.set('n', '[q', '<Cmd>try | cprevious | catch /E553/ | clast | endtry<CR>', { desc = 'Previous quickfix item (wraps)' })
-
   --- :GDiffMaster —:GDiffFiles against origin's default branch (origin/master, origin/main)
   vim.api.nvim_create_user_command('GDiffMaster', function()
     local default = vim.trim(vim.fn.system { 'git', 'rev-parse', '--abbrev-ref', 'origin/HEAD' })

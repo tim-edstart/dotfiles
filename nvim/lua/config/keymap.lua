@@ -89,3 +89,20 @@ cmap('<c-/>', function()
   end
   return ''
 end, { expr = true, desc = 'Toggle Ex command: exec <-> eval' })
+
+
+-- ]q / [q: next / previous quickfix item, each file in its own tab, wrapping at the ends
+local function quickfix_step(step, wrap)
+  return function()
+    local switchbuf = vim.o.switchbuf
+    vim.o.switchbuf = 'usetab,newtab'
+    local ok, err = pcall(vim.cmd, step)
+    if not ok and tostring(err):find('E553') then
+      ok, err = pcall(vim.cmd, wrap)
+    end
+    vim.o.switchbuf = switchbuf
+    if not ok then vim.notify(tostring(err), vim.log.levels.ERROR) end
+  end
+end
+nmap(']q', quickfix_step('cnext', 'cfirst'), { desc = 'Next quickfix item, in its own tab (wraps)' })
+nmap('[q', quickfix_step('cprevious', 'clast'), { desc = 'Previous quickfix item, in its own tab (wraps)' })

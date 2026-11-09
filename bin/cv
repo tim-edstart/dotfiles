@@ -7,8 +7,9 @@
 Neovim starts with the branch's changed files (against the merge base with the default
 branch) in the quickfix list: ]q / [q walk them, ,gd diffs one. A second `cv` on the same
 worktree switches to its window instead of opening another. Run from outside tmux (e.g.
-from the Claude app), it opens the window in your most recent tmux session and brings
-iTerm2 to the front."""
+from the Claude app), it opens the window in your most recent tmux session and puts it on
+screen: a terminal already attached to that session switches to it, otherwise a new iTerm2
+tab attaches to it."""
 import glob
 import json
 import os
@@ -129,7 +130,8 @@ def open_in_tmux(root):
         lua = ("lua local f = vim.fn.systemlist({'git', 'diff', '--name-only', '--relative', '%s'}) "
                "vim.fn.setqflist({}, ' ', {title = 'changed since %s', items = vim.tbl_map("
                "function(n) return {filename = n, lnum = 1} end, f)}) "
-               "if #f > 0 then vim.cmd('silent! cfirst') end" % (base, base[:8]))
+               "if #f > 0 then local sb = vim.o.switchbuf vim.o.switchbuf = 'useopen' "
+               "vim.cmd('silent! cfirst') vim.o.switchbuf = sb end" % (base, base[:8]))
         cmd += " -c " + shlex.quote(lua)
     args = ["new-window", "-P", "-F", "#{session_name}:#{window_index}", "-n", name[:24], "-c", root]
     if not inside:
@@ -141,6 +143,35 @@ def open_in_tmux(root):
     return target
 
 
+ITERM_ATTACH = """tell application "iTerm"
+    activate
+    if (count of windows) is 0 then
+        create window with default profile
+    else
+        tell current window to create tab with default profile
+    end if
+    tell current session of current window to write text "%s"
+end tell"""
+
+
+def show(target):
+    """Put the window on screen: switch whatever terminal is on its session to it, or attach a new iTerm2 tab."""
+    if os.environ.get("TMUX"):
+        tmux("switch-client", "-t", target)
+        return
+    session = target.split(":", 1)[0]
+    clients = tmux("list-clients", "-t", session, "-F", "#{client_tty}").stdout.split()
+    for tty in clients:
+        tmux("switch-client", "-c", tty, "-t", target)
+    if clients:
+        subprocess.run(["open", "-a", "iTerm"])
+        return
+    attach = f"tmux attach-session -t {shlex.quote(session)}"
+    r = subprocess.run(["osascript", "-e", ITERM_ATTACH % attach], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"cv: couldn't open iTerm2 ({r.stderr.strip()}); run: {attach}", file=sys.stderr)
+
+
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else pick()
     if not path:
@@ -149,8 +180,7 @@ def main():
     if not root:
         sys.exit(f"cv: {path} is not in a git repository")
     target = open_in_tmux(root)
-    if not os.environ.get("TMUX"):
-        subprocess.run(["open", "-a", "iTerm"])
+    show(target)
     print(f"cv: {root} → tmux {target}")
 
 
