@@ -106,3 +106,7 @@ local function quickfix_step(step, wrap)
 end
 nmap(']q', quickfix_step('cnext', 'cfirst'), { desc = 'Next quickfix item, in its own tab (wraps)' })
 nmap('[q', quickfix_step('cprevious', 'clast'), { desc = 'Previous quickfix item, in its own tab (wraps)' })
+
+-- gb / gB: back and forward through the jump list, the way out of a gd
+nmap('gb', '<C-o>', { desc = 'Jump back (<C-o>)' })
+nmap('gB', '<C-i>', { desc = 'Jump forward (<C-i>)' })
