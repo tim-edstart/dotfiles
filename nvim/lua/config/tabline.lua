@@ -20,6 +20,11 @@ M.init_xtabline = function()
     buffer_format = 1,
     -- Do not filter buffers in the list based on directory.
     buffer_filtering = 0,
+
+    --[[ Tabs ]]
+    -- 0: file name only (see :h xtabline-paths)
+    current_tab_paths = 0,
+    other_tabs_paths = 0,
   }
 end
 
