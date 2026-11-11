@@ -139,7 +139,7 @@ def tmux(*args):
     return subprocess.run(["tmux", *args], capture_output=True, text=True)
 
 
-def open_in_tmux(root, name=None, base=None, tabs=False):
+def open_in_tmux(root, name=None, base=None, pr=False):
     name = name or git(root, "branch", "--show-current").removeprefix("claude/").removeprefix("worktree-") \
         or os.path.basename(root)
     inside = bool(os.environ.get("TMUX"))
@@ -156,7 +156,9 @@ def open_in_tmux(root, name=None, base=None, tabs=False):
     base = base or base_ref(root)
     cmd = "nvim"
     if base:  # changed files of the branch, plus uncommitted ones, into the quickfix list
-        files = git(root, "diff", "--name-only", "--relative", "--diff-filter=d", base).splitlines() if tabs else []
+        files = git(root, "diff", "--name-only", "--relative", "--diff-filter=d", base).splitlines() if pr else []
+        if pr:  # gitsigns marks the PR's lines, not just local edits (nvim/lua/config/git.lua)
+            cmd += " --cmd " + shlex.quote(f"let g:cv_base = '{base}'")
         if files:  # -p opens at most 'tabpagemax' tabs, 10 by default
             cmd += f" --cmd 'set tabpagemax={max(len(files), 10)}' -p " + " ".join(map(shlex.quote, files))
         lua = ("lua local f = vim.fn.systemlist({'git', 'diff', '--name-only', '--relative', '%s'}) "
@@ -209,7 +211,7 @@ def main():
         if len(sys.argv) < 3:
             sys.exit("cv: --pr needs a PR number or URL")
         root, name, base = review_pr(sys.argv[2])
-        target = open_in_tmux(root, name, base, tabs=True)
+        target = open_in_tmux(root, name, base, pr=True)
     else:
         path = sys.argv[1] if len(sys.argv) > 1 else pick()
         if not path:

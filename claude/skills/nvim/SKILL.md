@@ -16,7 +16,11 @@ Use this for a PR number or URL, or for "this PR" when one is under discussion.
      PR's latest head, unless it has local edits.
    - It finds the changed files against the PR's own base branch, so a stacked PR shows only its own
      files. Each changed file opens in its own tab and is also in the quickfix list.
-2. Reply in one line: the PR, and "gt / gT between the N tabs, ]q / [q to step through them".
+   - The git signs in the left column mark the PR's own lines against that base, not just local edits.
+     `,hB` flips them to local edits and back. While they mark the PR, `,hr` resets a block to the
+     base branch's version.
+2. Reply in one line: the PR, and "gt / gT between the N tabs, ]q / [q to step through them, ,hB
+   flips the signs to your local edits".
 
 On a colleague's PR, edits in the review worktree stay local: never commit or push from it.
 

@@ -176,6 +176,21 @@ function M.setup_gitsigns()
       map('v', '<leader>ha', '<leader>hs', { remap = true, desc = "Stage hunks on the selected range" })
       map('n', '<leader>hh', '<cmd>Gitsigns toggle_linehl<CR>')
       map('n', '<leader>hw', '<cmd>Gitsigns toggle_word_diff<CR>')
+      -- `cv --pr` sets g:cv_base to the PR's merge base, so the signs mark the PR's own lines and ,hB flips
+      -- to local edits. A `base` in the config is lost on the buffers open at startup, so each buffer moves
+      -- to it once attached (the cache entry change_base needs is set right after on_attach returns)
+      if vim.g.cv_base then
+        if not vim.g.cv_local_signs then
+          vim.schedule(function()
+            vim.api.nvim_buf_call(bufnr, function() require('gitsigns').change_base(vim.g.cv_base) end)
+          end)
+        end
+        map('n', '<leader>hB', function()
+          vim.g.cv_local_signs = not vim.g.cv_local_signs
+          require('gitsigns').change_base(not vim.g.cv_local_signs and vim.g.cv_base or nil, true)
+          vim.notify(vim.g.cv_local_signs and 'Signs: your local edits' or "Signs: the PR's changes")
+        end, { desc = "Flip signs between the PR's changes and local edits" })
+      end
     end,
     debug_mode = false,
   }
