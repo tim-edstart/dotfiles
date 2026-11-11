@@ -120,7 +120,9 @@ def review_pr(ref):
     run("git", "-C", repo, "fetch", "-q", "origin", head, base)
     root = worktrees(repo).get(head)
     if not root:
-        root = os.path.join(repo, ".claude", "worktrees", "review-" + head.replace("/", "-"))
+        # Short, because xtabline's right corner shows the cwd: a long one leaves no room for the tabs
+        # in an 80-column terminal, and xtabline then fails on every redraw (E684)
+        root = os.path.join(repo, ".claude", "worktrees", f"review-pr{pr['number']}")
         if not os.path.isdir(root):
             run("git", "-C", repo, "worktree", "add", "-q", "--detach", root, f"origin/{head}")
         elif git(root, "status", "--porcelain"):

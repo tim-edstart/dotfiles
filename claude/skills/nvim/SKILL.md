@@ -12,7 +12,7 @@ Use this for a PR number or URL, or for "this PR" when one is under discussion.
 1. From inside the PR's repository, run `~/.dotfiles/bin/cv --pr <number or URL>`.
    - It fetches the PR and opens a tmux window named `#<number>`.
    - It uses the head branch's own worktree if there is one. Otherwise it makes a detached one at
-     `<repo>/.claude/worktrees/review-<branch, / as ->`. On later runs it moves that worktree to the
+     `<repo>/.claude/worktrees/review-pr<number>`. On later runs it moves that worktree to the
      PR's latest head, unless it has local edits.
    - It finds the changed files against the PR's own base branch, so a stacked PR shows only its own
      files. Each changed file opens in its own tab and is also in the quickfix list.
