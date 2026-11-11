@@ -4,7 +4,7 @@
   cv               pick a session with fzf (newest first), then open it
   cv <dir>         open that directory (the Claude skill /nvim runs `cv "$PWD"`)
   cv --pr <n|url>  open a pull request, from inside its repository: fetch it into a review
-                   worktree and open every changed file in its own tab
+                   worktree and open every changed file in its own tab, at its first changed line
 
 Neovim starts with the branch's changed files (against the merge base with the default
 branch, or with a PR's own base branch) in the quickfix list: ]q / [q walk them, ,gd diffs one. A second `cv` on the same
@@ -141,6 +141,28 @@ def tmux(*args):
     return subprocess.run(["tmux", *args], capture_output=True, text=True)
 
 
+# Lists the files changed since @BASE@ in the quickfix list, and puts each tab's cursor on its file's
+# first changed line. One line, because nvim takes it as a single -c command.
+CHANGED_LUA = (
+    "lua local first, file = {} "
+    "for _, l in ipairs(vim.fn.systemlist({'git', 'diff', '-U0', '--relative', '--no-color', '--no-ext-diff', "
+    "'--src-prefix=a/', '--dst-prefix=b/', '@BASE@'})) do "
+    "local path = l:match('^%+%+%+ (.*)') "
+    "if path then file = path:match('^b/(.*)') "
+    "elseif file and not first[file] then local n = l:match('^@@ %-%S+ %+(%d+)') "
+    "if n then first[file] = math.max(tonumber(n), 1) end end end "
+    "local f = vim.fn.systemlist({'git', 'diff', '--name-only', '--relative', '@BASE@'}) "
+    "vim.fn.setqflist({}, ' ', {title = 'changed since @SHORT@', items = vim.tbl_map("
+    "function(n) return {filename = n, lnum = first[n] or 1} end, f)}) "
+    "for _, w in ipairs(vim.tbl_map(vim.api.nvim_tabpage_get_win, vim.api.nvim_list_tabpages())) do "
+    "local n = first[vim.fn.fnamemodify(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(w)), ':.')] "
+    "if n and pcall(vim.api.nvim_win_set_cursor, w, {n, 0}) then "
+    "vim.api.nvim_win_call(w, function() vim.cmd('normal! zz') end) end end "
+    "if #f > 0 then local sb = vim.o.switchbuf vim.o.switchbuf = 'useopen' "
+    "vim.cmd('silent! cfirst') vim.o.switchbuf = sb end"
+)
+
+
 def open_in_tmux(root, name=None, base=None, pr=False):
     name = name or git(root, "branch", "--show-current").removeprefix("claude/").removeprefix("worktree-") \
         or os.path.basename(root)
@@ -163,12 +185,7 @@ def open_in_tmux(root, name=None, base=None, pr=False):
             cmd += " --cmd " + shlex.quote(f"let g:cv_base = '{base}'")
         if files:  # -p opens at most 'tabpagemax' tabs, 10 by default
             cmd += f" --cmd 'set tabpagemax={max(len(files), 10)}' -p " + " ".join(map(shlex.quote, files))
-        lua = ("lua local f = vim.fn.systemlist({'git', 'diff', '--name-only', '--relative', '%s'}) "
-               "vim.fn.setqflist({}, ' ', {title = 'changed since %s', items = vim.tbl_map("
-               "function(n) return {filename = n, lnum = 1} end, f)}) "
-               "if #f > 0 then local sb = vim.o.switchbuf vim.o.switchbuf = 'useopen' "
-               "vim.cmd('silent! cfirst') vim.o.switchbuf = sb end" % (base, base[:8]))
-        cmd += " -c " + shlex.quote(lua)
+        cmd += " -c " + shlex.quote(CHANGED_LUA.replace("@BASE@", base).replace("@SHORT@", base[:8]))
     args = ["new-window", "-P", "-F", "#{session_name}:#{window_index}", "-n", name[:24], "-c", root]
     if not inside:
         last = tmux("list-sessions", "-F", "#{session_last_attached} #{session_name}").stdout.split("\n")

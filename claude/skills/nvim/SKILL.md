@@ -15,7 +15,8 @@ Use this for a PR number or URL, or for "this PR" when one is under discussion.
      `<repo>/.claude/worktrees/review-pr<number>`. On later runs it moves that worktree to the
      PR's latest head, unless it has local edits.
    - It finds the changed files against the PR's own base branch, so a stacked PR shows only its own
-     files. Each changed file opens in its own tab and is also in the quickfix list.
+     files. Each changed file opens in its own tab at its first changed line, and is also in the
+     quickfix list, where ]q lands on that line too.
    - The git signs in the left column mark the PR's own lines against that base, not just local edits.
      `,hB` flips them to local edits and back. While they mark the PR, `,hr` resets a block to the
      base branch's version.
