@@ -19,8 +19,9 @@ Use this for a PR number or URL, or for "this PR" when one is under discussion.
    - The git signs in the left column mark the PR's own lines against that base, not just local edits.
      `,hB` flips them to local edits and back. While they mark the PR, `,hr` resets a block to the
      base branch's version.
-2. Reply in one line: the PR, and "gt / gT between the N tabs, ]q / [q to step through them, ,hB
-   flips the signs to your local edits".
+2. Reply in one line: the PR, and ":tabn / gT or <N>gt between the N tabs, ]q / [q to step through
+   them, ,hB flips the signs to your local edits". Never offer a bare `gt`: where a language server
+   runs it jumps to the type definition instead.
 
 On a colleague's PR, edits in the review worktree stay local: never commit or push from it.
 
