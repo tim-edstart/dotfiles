@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Open a Claude app session's worktree in Neovim, in its own tmux window.
 
-  cv          pick a session with fzf (newest first), then open it
-  cv <dir>    open that directory (the Claude skill /nvim runs `cv "$PWD"`)
+  cv               pick a session with fzf (newest first), then open it
+  cv <dir>         open that directory (the Claude skill /nvim runs `cv "$PWD"`)
+  cv --pr <n|url>  open a pull request, from inside its repository: fetch it into a review
+                   worktree and open every changed file in its own tab
 
 Neovim starts with the branch's changed files (against the merge base with the default
-branch) in the quickfix list: ]q / [q walk them, ,gd diffs one. A second `cv` on the same
+branch, or with a PR's own base branch) in the quickfix list: ]q / [q walk them, ,gd diffs one. A second `cv` on the same
 worktree switches to its window instead of opening another. Run from outside tmux (e.g.
 from the Claude app), it opens the window in your most recent tmux session and puts it on
 screen: a terminal already attached to that session switches to it, otherwise a new iTerm2
@@ -101,6 +103,33 @@ def pick():
     return path
 
 
+def run(*cmd, cwd=None):
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"cv: {' '.join(cmd[:3])} failed: {r.stderr.strip()}")
+    return r.stdout
+
+
+def review_pr(ref):
+    """Fetch a PR into a review worktree: its branch's own worktree when there is one, else a
+    detached one at the PR's head. Returns the worktree, a window name and the merge base with the
+    PR's base branch, so a stacked PR shows only its own files."""
+    repo = git(os.getcwd(), "rev-parse", "--show-toplevel") or sys.exit("cv: run --pr from inside the PR's repository")
+    pr = json.loads(run("gh", "pr", "view", ref, "--json", "number,headRefName,baseRefName", cwd=repo))
+    head, base = pr["headRefName"], pr["baseRefName"]
+    run("git", "-C", repo, "fetch", "-q", "origin", head, base)
+    root = worktrees(repo).get(head)
+    if not root:
+        root = os.path.join(repo, ".claude", "worktrees", "review-" + head.replace("/", "-"))
+        if not os.path.isdir(root):
+            run("git", "-C", repo, "worktree", "add", "-q", "--detach", root, f"origin/{head}")
+        elif git(root, "status", "--porcelain"):
+            print(f"cv: {root} has local edits, so it stays at its commit", file=sys.stderr)
+        else:
+            run("git", "-C", root, "checkout", "-q", "--detach", f"origin/{head}")
+    return root, f"#{pr['number']}", git(root, "merge-base", "HEAD", f"origin/{base}")
+
+
 def base_ref(cwd):
     head = git(cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD") or "origin/master"
     return git(cwd, "merge-base", "HEAD", head)
@@ -110,8 +139,8 @@ def tmux(*args):
     return subprocess.run(["tmux", *args], capture_output=True, text=True)
 
 
-def open_in_tmux(root):
-    name = git(root, "branch", "--show-current").removeprefix("claude/").removeprefix("worktree-") \
+def open_in_tmux(root, name=None, base=None, tabs=False):
+    name = name or git(root, "branch", "--show-current").removeprefix("claude/").removeprefix("worktree-") \
         or os.path.basename(root)
     inside = bool(os.environ.get("TMUX"))
     if not inside and tmux("has-session").returncode != 0:
@@ -124,9 +153,12 @@ def open_in_tmux(root):
             tmux("select-window", "-t", target)
             return target
 
-    base = base_ref(root)
+    base = base or base_ref(root)
     cmd = "nvim"
     if base:  # changed files of the branch, plus uncommitted ones, into the quickfix list
+        files = git(root, "diff", "--name-only", "--relative", "--diff-filter=d", base).splitlines() if tabs else []
+        if files:  # -p opens at most 'tabpagemax' tabs, 10 by default
+            cmd += f" --cmd 'set tabpagemax={max(len(files), 10)}' -p " + " ".join(map(shlex.quote, files))
         lua = ("lua local f = vim.fn.systemlist({'git', 'diff', '--name-only', '--relative', '%s'}) "
                "vim.fn.setqflist({}, ' ', {title = 'changed since %s', items = vim.tbl_map("
                "function(n) return {filename = n, lnum = 1} end, f)}) "
@@ -173,13 +205,19 @@ def show(target):
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else pick()
-    if not path:
-        return
-    root = git(os.path.abspath(path), "rev-parse", "--show-toplevel")
-    if not root:
-        sys.exit(f"cv: {path} is not in a git repository")
-    target = open_in_tmux(root)
+    if sys.argv[1:2] == ["--pr"]:
+        if len(sys.argv) < 3:
+            sys.exit("cv: --pr needs a PR number or URL")
+        root, name, base = review_pr(sys.argv[2])
+        target = open_in_tmux(root, name, base, tabs=True)
+    else:
+        path = sys.argv[1] if len(sys.argv) > 1 else pick()
+        if not path:
+            return
+        root = git(os.path.abspath(path), "rev-parse", "--show-toplevel")
+        if not root:
+            sys.exit(f"cv: {path} is not in a git repository")
+        target = open_in_tmux(root)
     show(target)
     print(f"cv: {root} → tmux {target}")
 
