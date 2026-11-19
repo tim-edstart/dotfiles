@@ -1036,8 +1036,27 @@ function M._setup_kotlin_lsp()
     update(e.bang and { '--force' } or {}, restart)
   end, { bang = true, desc = 'Install the latest kotlin-lsp build and restart the server (! reinstalls the same build)' })
 
+  -- kotlin-lsp doesn't run Lombok, so `repayment.date` resolves to the package-private
+  -- field instead of the generated getDate() and is flagged, though Gradle compiles it.
+  local function drop_lombok_false_errors(diagnostics)
+    return vim.tbl_filter(function(d)
+      return not d.message:find("^Cannot access 'field .-': it is package%-private")
+    end, diagnostics or {})
+  end
+  local handlers = {
+    ['textDocument/publishDiagnostics'] = function(err, result, ctx, config)
+      if result then result.diagnostics = drop_lombok_false_errors(result.diagnostics) end
+      return vim.lsp.handlers['textDocument/publishDiagnostics'](err, result, ctx, config)
+    end,
+    ['textDocument/diagnostic'] = function(err, result, ctx, config)
+      if result and result.items then result.items = drop_lombok_false_errors(result.items) end
+      return vim.lsp.handlers['textDocument/diagnostic'](err, result, ctx, config)
+    end,
+  }
+
   local initialised = {}  ---@type table<integer, true>
   vim.lsp.config('kotlin_lsp', {
+    handlers = handlers,
     cmd = { launcher, '--stdio' },
     filetypes = { 'kotlin' },
     -- Nested lists are priority groups (nvim 0.11.2+): prefer the root of the
