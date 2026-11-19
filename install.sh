@@ -6,7 +6,8 @@
 # It installs the tools (zsh, tmux, neovim, git, ripgrep, fd, fzf, jq, gh, python3, cmake,
 # a C compiler, mise for every language runtime, Powerlevel10k and its font), links every
 # config, makes zsh the login shell, installs tmux and nvim plugins, the Kotlin language
-# server and the iTerm2 theme. Re-running only changes what is missing.
+# server and the iTerm2 theme, then offers to clone edstart/platform and runs `dev doctor`
+# there. Re-running only changes what is missing.
 #
 #   ./install.sh            everything
 #   ./install.sh --no-deps  links, plugins and shell only; no package installs
@@ -158,9 +159,28 @@ if [[ "$OS" == "Darwin" && -f "$HOME/Library/Preferences/com.googlecode.iterm2.p
   "$DOTFILES/bin/iterm2-theme" || warn "iTerm2 theme not applied; run bin/iterm2-theme"
 fi
 
+# Edstart platform: clone it if missing, then `dev doctor` walks through its setup
+# (Maven keys, Docker, Postgres, node_modules), asking for anything only a person can give.
+PLATFORM="$HOME/IdeaProjects/platform"
+export PATH="$DOTFILES/bin:$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+if [[ -t 0 && "$WITH_DEPS" == 1 ]]; then
+  if [[ ! -d "$PLATFORM/.git" ]]; then
+    read -r -p "Clone edstart/platform into $PLATFORM? [y/N] " answer
+    if [[ "$answer" == [yY]* ]]; then
+      gh auth status >/dev/null 2>&1 || gh auth login
+      gh repo clone edstart/platform "$PLATFORM" || warn "clone failed; run: gh repo clone edstart/platform $PLATFORM"
+    fi
+  fi
+  if [[ -d "$PLATFORM/.git" ]]; then
+    info "checking the platform setup (dev doctor)"
+    (cd "$PLATFORM" && dev doctor) || warn "some platform setup is left; run dev doctor in $PLATFORM, or :DevDoctor in nvim"
+  fi
+fi
+
 info "done."
 cat <<MSG
   next:  exec zsh            (or open a new terminal window)
          dev                 in any project: what it can run and what is running
+         dev doctor          check a project's setup and fix what is missing (:DevDoctor in nvim)
          prefix + t in tmux  the dev command center
 MSG

@@ -14,11 +14,15 @@
   dev tasks                  every task and where it comes from
   dev clean                  close the windows of finished tasks, drop logs older than 14 days
   dev init                   write a starter .dev.toml here
+  dev doctor [--quiet]       check this project's setup and walk through fixing each problem;
+                             --quiet only lists problems (exit 1 if any), for editors
 
 Tasks come from .dev.toml at the project root (the nearest one above cwd), from
 $DEV_PROJECTS_DIR/*.toml (default ~/.dotfiles/dev/projects) whose `root` is this
-project, and from the project's Makefile, package.json files, Cargo.toml, justfile
-and Gradle application projects. Each run is a tmux window in the `dev` session:
+project or the main checkout of this git worktree, or whose `remote` is part of the
+origin URL (its [env] applies to every task, its [checks] feed dev doctor), and
+from the project's Makefile, package.json files, Cargo.toml, justfile and Gradle
+application projects. Each run is a tmux window in the `dev` session:
 the window keeps a shell open after the task ends, so its output stays readable.
 State and logs live under ~/.local/state/dev/<project>/.
 """
@@ -42,6 +46,7 @@ SESSION = os.environ.get("DEV_TMUX_SESSION", "dev")
 PROJECTS_DIR = Path(os.environ.get("DEV_PROJECTS_DIR", HOME / ".dotfiles/dev/projects")).expanduser()
 STATE_ROOT = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "dev"
 OLD_AFTER_DAYS = 7
+SECRETS = HOME / ".zshrc.local"  # where `dev doctor` saves keys; sourced by ~/.zshrc and before every check
 COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 
@@ -94,6 +99,11 @@ def run_out(args, cwd=None, check=False):
     if check and r.returncode:
         die(f"{' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout.strip()
+
+
+def expand_env(env):
+    """Env values may use ~ and $VARS, so one project file works on any machine."""
+    return {k: os.path.expandvars(os.path.expanduser(str(v))) for k, v in env.items()}
 
 
 # --- a TOML subset: tables, strings, ints, booleans, string arrays, inline string tables ---
@@ -155,6 +165,8 @@ class Project:
     def __init__(self, cwd=None):
         cwd = Path(cwd or os.getcwd()).resolve()
         self.root = self.find_root(cwd)
+        self.main = self.main_checkout(self.root)
+        self.worktree = "" if self.main == self.root else self.root.name
         self.name = self.root.name
         slug = hashlib.sha1(str(self.root).encode()).hexdigest()[:8]
         self.state = STATE_ROOT / f"{self.name}-{slug}"
@@ -172,16 +184,33 @@ class Project:
                 return d
         return cwd
 
+    @staticmethod
+    def main_checkout(root):
+        """A git worktree's main checkout, so a project file's `root` covers all its worktrees."""
+        common = run_out(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=root)
+        return Path(common).parent.resolve() if common else root
+
+    def origin(self):
+        if not hasattr(self, "_origin"):
+            self._origin = run_out(["git", "remote", "get-url", "origin"], cwd=self.root)
+        return self._origin
+
     def load_tasks(self):
+        self.env, self.checks, self.hints = {}, {}, {}
         tasks = {}
         for name, t in self.discovered().items():
             tasks[name] = t
         for src in sorted(PROJECTS_DIR.glob("*.toml")) if PROJECTS_DIR.is_dir() else []:
             data = parse_toml(src.read_text())
-            root = data.get("root")
-            if root and Path(os.path.expanduser(root)).resolve() == self.root:
+            root, remote = data.get("root"), data.get("remote")
+            if (root and Path(os.path.expanduser(root)).resolve() == self.main) or (remote and remote in self.origin()):
+                # $DEV_FILES: a folder named after the project file, for the scripts its tasks call
+                env = {"DEV_FILES": str(src.with_suffix("")), **data.get("env", {})}
+                self.env = expand_env(env)
+                self.checks.update(data.get("checks", {}))
+                self.hints.update(data.get("hints", {}))
                 for name, t in data.get("tasks", {}).items():
-                    tasks[name] = self.task(name, t, f"{src.name}")
+                    tasks[name] = self.task(name, dict(t, env={**env, **t.get("env", {})}), src.name)
         local = self.root / ".dev.toml"
         if local.exists():
             for name, t in parse_toml(local.read_text()).get("tasks", {}).items():
@@ -196,9 +225,12 @@ class Project:
             "cmd": t["cmd"].strip(),
             "cwd": str((self.root / t.get("cwd", ".")).resolve()),
             "desc": t.get("desc", ""),
-            "env": {k: str(v) for k, v in t.get("env", {}).items()},
+            "env": expand_env(t.get("env", {})),
             "after": list(t.get("after", [])),
             "group": t.get("group", ""),
+            "port": t.get("port"),
+            "ready": t.get("ready", ""),
+            "needs": list(t.get("needs", [])),
             "source": source,
         }
 
@@ -340,26 +372,97 @@ def pick_task(project):
         return rows[int(choice) - 1].split("\t")[0] if choice.isdigit() and 0 < int(choice) <= len(rows) else None
 
 
-def start(project, task, args=None, seen=None):
+def port_holder(port):
+    """What listens on the port, e.g. 'java (pid 123)', or None."""
+    out = run_out(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpc"])
+    pid, cmd = re.search(r"^p(\d+)", out, re.M), re.search(r"^c(.+)", out, re.M)
+    return f"{cmd.group(1) if cmd else '?'} (pid {pid.group(1)})" if pid else None
+
+
+def running_in_other_checkout(project, name):
+    """The folder of another checkout of this project where `name` is running, or None."""
+    for f in STATE_ROOT.glob(f"*/runs/{project.run_file(name).name}"):
+        if f.parent.parent == project.state:
+            continue
+        try:
+            run = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if run.get("status") == "running" and alive(run.get("pid")):
+            return run["cwd"]
+    return None
+
+
+def is_ready(task):
+    return subprocess.run([os.environ.get("SHELL", "/bin/sh"), "-c", task["ready"]], cwd=task["cwd"],
+                          env=dict(os.environ, **task["env"]), capture_output=True).returncode == 0
+
+
+def preflight(project, task, free_wait=0):
+    """Refuse a task that would fail on start, saying why, before anything is launched."""
+    name = task["name"]
+    if not Path(task["cwd"]).is_dir():
+        die(f"{name} runs in {task['cwd']}, which this checkout doesn't have")
+    port = task.get("port")
+    if not port:
+        return
+    deadline = time.time() + free_wait
+    while (holder := port_holder(port)) and time.time() < deadline:
+        time.sleep(0.5)
+    if holder:
+        other = running_in_other_checkout(project, name)
+        why = f"it's {name} from {other}: stop it with  cd {shlex.quote(other)} && dev stop {name}" if other else "stop that first"
+        die(f"{name} needs port {port}, but {holder} is listening on it; {why}")
+
+
+def check_needs(project, task):
+    for need in task["needs"]:
+        check = project.checks.get(need) or die(f"{task['name']} needs check {need}, which {task['source']} doesn't define")
+        if not check_passes(project, check):
+            die(f"{task['name']} can't start: {check['desc']}\n  fix: {check['fix']}\n  or run: dev doctor")
+
+
+def wait_ready(project, task, timeout=120):
+    """Wait until a dependency answers its `ready` check; stop if it exits first."""
+    if not task["ready"]:
+        return
+    print(f"waiting for {task['name']} to be ready…")
+    deadline = time.time() + timeout
+    while not is_ready(task):
+        run = project.load_run(task["name"])
+        if run and run["status"] in ("exited", "died"):
+            die(f"{task['name']} stopped before it was ready; its output: dev logs {task['name']}")
+        if time.time() > deadline:
+            die(f"{task['name']} wasn't ready after {timeout}s; its output: dev logs {task['name']}")
+        time.sleep(1)
+
+
+def start(project, task, args=None, seen=None, free_wait=0):
     seen = seen or set()
     if task["name"] in seen:
         return
     seen.add(task["name"])
-    for dep in task.get("after", []):
-        if dep not in project.tasks:
-            die(f"{task['name']} runs after {dep}, which is not a task here")
-        dep_run = project.load_run(dep)
-        if not (dep_run and dep_run["status"] == "running"):
-            start(project, project.tasks[dep], seen=seen)
     run = project.load_run(task["name"])
     if run and run["status"] == "running":
         print(f"{task['name']} is already running (pid {run['pid']}, since {ago(run['started'])}); dev open {task['name']}")
         return
+    preflight(project, task, free_wait)
+    for dep in task.get("after", []):
+        if dep not in project.tasks:
+            die(f"{task['name']} runs after {dep}, which is not a task here")
+        dep_task = project.tasks[dep]
+        if dep_task["ready"] and is_ready(dep_task):
+            continue
+        dep_run = project.load_run(dep)
+        if not (dep_run and dep_run["status"] == "running"):
+            start(project, dep_task, seen=seen)
+        wait_ready(project, dep_task)
+    check_needs(project, task)
     ensure_session()
     cmd = task["cmd"] + (" " + " ".join(shlex.quote(a) for a in args) if args else "")
     log = project.state / "logs" / re.sub(r"[^\w.-]", "__", task["name"]) / (datetime.now().strftime("%Y%m%d-%H%M%S") + ".log")
     log.parent.mkdir(parents=True, exist_ok=True)
-    window = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", f"{SESSION}:", "-n", task["name"].replace(":", "·"), "-c", task["cwd"])
+    window = tmux("new-window", "-d", "-P", "-F", "#{window_id}", "-t", f"{SESSION}:", "-n", "/".join(filter(None, (project.worktree, task["name"].replace(":", "·")))), "-c", task["cwd"])
     project.save_run({
         "task": task["name"], "cmd": cmd, "cwd": task["cwd"], "env": task.get("env", {}), "status": "starting",
         "window": window, "log": str(log), "started": time.time(), "pid": None, "git_head": project.git_head(),
@@ -400,7 +503,83 @@ def cmd_exec_inner(project, name):
     footer = f"── dev: {name} {verdict} after {duration(run['started'], run['ended'])} · log: {run['log']}"
     print(c("32" if code == 0 else "31", footer))
     log.write((footer + "\n").encode())
+    if code > 0:
+        for hint in matching_hints(project, run["log"]):
+            print(c("33", f"── dev: {hint}"))
     return code
+
+
+def matching_hints(project, log_path):
+    """What a failed run's output says went wrong, from the project's [hints]."""
+    try:
+        with open(log_path, "rb") as f:
+            f.seek(max(0, os.path.getsize(log_path) - 512_000))
+            text = f.read().decode(errors="replace")
+    except OSError:
+        return []
+    out = []
+    for h in project.hints.values():
+        m = re.search(h["match"], text)
+        if m:
+            out.append(m.expand(h["say"]))
+    return out
+
+
+# --- setup checks -------------------------------------------------------------
+
+def check_passes(project, check):
+    """A check's `test` passes, run with the project's [env] after sourcing the secrets file."""
+    script = f'[ -f {shlex.quote(str(SECRETS))} ] && . {shlex.quote(str(SECRETS))} >/dev/null 2>&1; {check["test"]}'
+    return subprocess.run(["/bin/zsh" if Path("/bin/zsh").exists() else "/bin/sh", "-c", script], cwd=project.root,
+                          env=dict(os.environ, **project.env), capture_output=True).returncode == 0
+
+
+def save_secret(name, value):
+    """Set `export NAME=value` in the secrets file, replacing an earlier line for NAME."""
+    lines = SECRETS.read_text().splitlines() if SECRETS.exists() else []
+    line = f"export {name}={shlex.quote(value)}"
+    lines = [l for l in lines if not re.match(rf"\s*export\s+{re.escape(name)}=", l)] + [line]
+    SECRETS.write_text("\n".join(lines) + "\n")
+    SECRETS.chmod(0o600)
+    os.environ[name] = value
+
+
+def cmd_doctor(project, quiet):
+    if not project.checks:
+        return None if quiet else print("this project defines no setup checks")
+    failing = [(n, ch) for n, ch in project.checks.items() if not check_passes(project, ch)]
+    if quiet:
+        for n, ch in failing:
+            print(f"{n}\t{ch['desc']}")
+        sys.exit(1 if failing else 0)
+    if not failing:
+        return print(c("32", f"all {len(project.checks)} setup checks pass"))
+    print(f"{len(failing)} of {len(project.checks)} setup checks fail. Going through them in order (ctrl-c stops).\n")
+    fixed = 0
+    for i, (n, ch) in enumerate(failing, 1):
+        if check_passes(project, ch):  # an earlier fix fixed this too
+            fixed += 1
+            continue
+        print(c("1", f"[{i}/{len(failing)}] {ch['desc']}"))
+        print(f"  {ch['fix']}")
+        if ch.get("ask"):
+            import getpass
+            prompt = f"  value for {ch['ask']} (saved to {SECRETS}; empty skips): "
+            value = (getpass.getpass(prompt) if ch.get("secret") else input(prompt)).strip()
+            if value:
+                save_secret(ch["ask"], value)
+        elif ch.get("run"):
+            if input(f"  run: {c('36', ch['run'])}\n  go? [Y/n] ").strip().lower() in ("", "y", "yes"):
+                subprocess.run([os.environ.get("SHELL", "/bin/sh"), "-c", ch["run"]], cwd=project.root, env=dict(os.environ, **project.env))
+        deadline = time.time() + int(ch.get("wait", 0))
+        while not (ok := check_passes(project, ch)) and time.time() < deadline:
+            time.sleep(2)
+        print(c("32", "  ✓ fixed\n") if ok else c("31", "  ✗ still failing\n"))
+        fixed += ok
+    left = len(failing) - fixed
+    print(c("32" if not left else "33", f"{fixed} fixed, {left} left" + ("; run dev doctor again once you have what's missing" if left else "")))
+    if left:
+        sys.exit(1)
 
 
 def cmd_stop(project, name, quiet=False):
@@ -613,7 +792,7 @@ def main(argv):
             return cmd_stop(project, name)
         if cmd == "restart":
             cmd_stop(project, name, quiet=True)
-            return start(project, project.tasks.get(name) or die(f"no task {name}"))
+            return start(project, project.tasks.get(name) or die(f"no task {name}"), free_wait=15)
         if cmd == "logs":
             return cmd_logs(project, name, "-f" in rest)
         return cmd_open(project, name)
@@ -628,6 +807,8 @@ def main(argv):
         return cmd_clean(project)
     if cmd == "init":
         return cmd_init(project)
+    if cmd == "doctor":
+        return cmd_doctor(project, "--quiet" in rest)
     if cmd in project.tasks:
         args = rest[rest.index("--") + 1:] if "--" in rest else rest
         return start(project, project.tasks[cmd], args)

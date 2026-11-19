@@ -1,10 +1,121 @@
-# Tasks for the Edstart platform monorepo. `dev` picks this file up because `root` matches.
+# Tasks for the Edstart platform monorepo and every worktree of it (`dev` matches `root`).
+# Scripts the tasks call live in ./platform/ and are reached as $DEV_FILES.
 root = "~/IdeaProjects/platform"
+remote = "edstart/platform"  # so a clone anywhere else gets these too
+
+# Every task and check gets these. The servers' own defaults (port 5432, user edstart_app)
+# don't match the Docker Postgres, which listens on 54329 with only the postgres user.
+[env]
+JAVA_HOME = "~/.local/share/mise/installs/java/corretto-21"
+EDSTART_DB_HOST = "localhost"
+EDSTART_DB_PORT = "54329"
+EDSTART_DB_NAME = "edstart"
+EDSTART_DB_USER = "postgres"
+EDSTART_DB_PWD = "postgres"
+
+# --- setup checks: `dev doctor` walks through the failing ones, in this order --------
+# A task's `needs` are checked before it starts, so it refuses with the fix instead of
+# crashing a minute later.
+
+[checks.docker-app]
+desc = "Docker Desktop is not installed"
+test = "[ -x /Applications/Docker.app/Contents/Resources/bin/docker ]"
+fix = "Install Docker Desktop, then open it once to accept its terms."
+run = "brew install --cask docker && open -a Docker"
+wait = 120
+
+[checks.docker-running]
+desc = "Docker Desktop is not running"
+test = "/Applications/Docker.app/Contents/Resources/bin/docker info >/dev/null 2>&1"
+fix = "Open Docker Desktop and wait for it to say it is running."
+run = "open -ga Docker"
+wait = 120
+
+[checks.java]
+desc = "JDK 21 (Corretto) is not installed where JAVA_HOME points"
+test = '[ -x "$JAVA_HOME/bin/java" ]'
+fix = "Gradle needs JDK 21; mise installs it."
+run = "mise install java@corretto-21"
+
+[checks.maven-key]
+desc = "STRATEGICODE_MAVEN_KEY is not set"
+test = '[ -n "$STRATEGICODE_MAVEN_KEY" ] && [ "${STRATEGICODE_MAVEN_KEY%...}" = "$STRATEGICODE_MAVEN_KEY" ]'  # a value ending in ... is a template placeholder
+fix = "Gradle downloads Edstart's own libraries with this key. Ask another platform developer for it."
+ask = "STRATEGICODE_MAVEN_KEY"
+
+[checks.maven-secret]
+desc = "STRATEGICODE_MAVEN_SECRET is not set"
+test = '[ -n "$STRATEGICODE_MAVEN_SECRET" ] && [ "${STRATEGICODE_MAVEN_SECRET%...}" = "$STRATEGICODE_MAVEN_SECRET" ]'  # a value ending in ... is a template placeholder
+fix = "The secret that goes with STRATEGICODE_MAVEN_KEY; ask for both together."
+ask = "STRATEGICODE_MAVEN_SECRET"
+secret = true
+
+[checks.postgres]
+desc = "There is no Postgres container on port 54329"
+test = '"$DEV_FILES/pg" exists'
+fix = "Gradle's startPostgres task creates it (Postgres 15, postgres/postgres, 500 connections)."
+run = "cd servers && ./gradlew :infrastructure:util:startPostgres"
+
+[checks.edstart-db]
+desc = "The local database edstart doesn't exist, or Postgres isn't running"
+test = '"$DEV_FILES/pg" ready && "$DEV_FILES/pg" has-db edstart'
+fix = "This creates an empty one. For real data instead, load a dev dump: cd servers && ./gradlew :tools:importDbClone --args=<yyyy-mm-dd> (needs AWS access to the dev dump bucket)."
+run = '"$DEV_FILES/pg" create-db edstart'
+
+[checks.pnpm]
+desc = "pnpm is not installed"
+test = "command -v pnpm >/dev/null"
+fix = "The front ends pin pnpm 8.5.1."
+run = "npm install -g pnpm@8.5.1"
+
+[checks.admin-deps]
+desc = "This checkout's admin front end has no node_modules"
+test = "[ -d admin/node_modules ]"
+fix = "Every worktree needs its own install. --frozen-lockfile keeps pnpm-lock.yaml unchanged."
+run = "cd admin && npx -y pnpm@8.5.1 install --frozen-lockfile"
+
+[checks.web-deps]
+desc = "This checkout's customer portal has no node_modules"
+test = "[ -d web/node_modules ]"
+fix = "Every worktree needs its own install. --frozen-lockfile keeps pnpm-lock.yaml unchanged."
+run = "cd web && npx -y pnpm@8.5.1 install --frozen-lockfile"
+
+# --- hints: printed under a task that fails, when its output matches -----------------
+
+[hints.missing-setting]
+match = 'Unknown config option: ([\w.]+)'
+say = 'a server setting is missing: \1. Add it to ~/.zshrc.local as EDSTART_ plus the name in capitals with dots as underscores (db.port is EDSTART_DB_PORT), then restart.'
+
+[hints.maven]
+match = 'STRATEGICODE_MAVEN_(KEY|SECRET)|Could not GET .*strategicode|status code 40[13]'
+say = "Gradle couldn't download Edstart's libraries: the Maven key or secret is missing or wrong. Run dev doctor."
+
+[hints.java]
+match = 'Gradle requires JVM|Unsupported class file major version'
+say = "the wrong Java ran. Run dev doctor; it checks JAVA_HOME."
+
+[hints.port]
+match = 'Address already in use'
+say = "another process holds this server's port. dev refuses to start in that case, so something outside dev holds it: lsof -nP -iTCP -sTCP:LISTEN | grep java"
+
+[hints.db]
+match = 'Connection to localhost:\d+ refused|role "\w+" does not exist|database "\w+" does not exist'
+say = "the server couldn't use Postgres. Run dev doctor."
+
+[hints.kotlin-memory]
+match = 'Not enough memory to run compilation'
+say = "too many Gradle builds at once. Stop the ones you aren't using (./gradlew --stop in that checkout), then restart."
+
+# --- tasks ----------------------------------------------------------------------------
 
 [tasks.db]
 desc = "Postgres 15 in Docker on 54329"
-cmd = "/Applications/Docker.app/Contents/Resources/bin/docker start sad_villani && /Applications/Docker.app/Contents/Resources/bin/docker logs -f --tail 20 sad_villani"
+cmd = '"$DEV_FILES/pg" start'
 group = "infra"
+port = 54329
+needs = ["docker-app", "docker-running", "postgres"]
+# The port opens before Postgres accepts connections, so servers wait for this instead.
+ready = '"$DEV_FILES/pg" ready'
 
 [tasks.admin]
 desc = "Admin server"
@@ -12,7 +123,8 @@ cmd = "./gradlew :services:admin:run"
 cwd = "servers"
 after = ["db"]
 group = "servers"
-env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+port = 8019
+needs = ["java", "maven-key", "maven-secret", "edstart-db"]
 
 [tasks.apply]
 desc = "Apply server"
@@ -20,7 +132,8 @@ cmd = "./gradlew :services:apply:run"
 cwd = "servers"
 after = ["db"]
 group = "servers"
-env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+port = 8017
+needs = ["java", "maven-key", "maven-secret", "edstart-db"]
 
 [tasks.calc]
 desc = "Calc server"
@@ -28,7 +141,8 @@ cmd = "./gradlew :services:calc:run"
 cwd = "servers"
 after = ["db"]
 group = "servers"
-env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+port = 8013
+needs = ["java", "maven-key", "maven-secret", "edstart-db"]
 
 [tasks.login]
 desc = "Login server"
@@ -36,7 +150,17 @@ cmd = "./gradlew :services:login:run"
 cwd = "servers"
 after = ["db"]
 group = "servers"
-env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+port = 8012
+needs = ["java", "maven-key", "maven-secret", "edstart-db"]
+
+[tasks.platform]
+desc = "Platform server"
+cmd = "./gradlew :services:platform:run"
+cwd = "servers"
+after = ["db"]
+group = "servers"
+port = 8024
+needs = ["java", "maven-key", "maven-secret", "edstart-db"]
 
 [tasks.workflow]
 desc = "Workflow server"
@@ -44,14 +168,15 @@ cmd = "./gradlew :services:workflow:run"
 cwd = "servers"
 after = ["db"]
 group = "servers"
-env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+port = 8025
+needs = ["java", "maven-key", "maven-secret", "edstart-db"]
 
 [tasks.compile]
 desc = "Compile servers and their tests (cheaper than build)"
 cmd = "./gradlew compileTestJava"
 cwd = "servers"
 group = "servers"
-env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+needs = ["java", "maven-key", "maven-secret"]
 
 [tasks.test]
 desc = "Admin tests against the Docker Postgres: dev test -- --tests '*SomeTest*'"
@@ -59,29 +184,35 @@ cmd = "./gradlew :services:admin:test --max-workers=2"
 cwd = "servers"
 after = ["db"]
 group = "servers"
-env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home", EDSTART_DB_HOST = "localhost", EDSTART_DB_PORT = "54329", EDSTART_DB_NAME = "edstart", EDSTART_DB_USER = "postgres", EDSTART_DB_PWD = "postgres", DB_HOST = "localhost", DB_PORT = "54329", DB_NAME = "edstart", DB_USER = "postgres", DB_PWD = "postgres" }
+needs = ["java", "maven-key", "maven-secret", "edstart-db"]
+env = { DB_HOST = "localhost", DB_PORT = "54329", DB_NAME = "edstart", DB_USER = "postgres", DB_PWD = "postgres" }
 
 [tasks.lint]
 desc = "ktlint over staged files (bin/lint -s)"
 cmd = "bin/lint -s"
 cwd = "servers"
 group = "servers"
-env = { JAVA_HOME = "/Users/timluo/Library/Java/JavaVirtualMachines/corretto-21.0.5/Contents/Home" }
+needs = ["java", "maven-key", "maven-secret"]
 
 [tasks.admin-ui]
 desc = "Admin front end (pnpm dev)"
 cmd = "pnpm dev"
 cwd = "admin/projects/admin"
 group = "web"
+port = 8011
+needs = ["pnpm", "admin-deps"]
 
 [tasks.portal]
 desc = "Customer portal (pnpm dev)"
 cmd = "pnpm dev"
 cwd = "web/projects/customer-portal"
 group = "web"
+port = 8021
+needs = ["pnpm", "web-deps"]
 
 [tasks.partner-portal]
 desc = "Partner portal (pnpm dev)"
 cmd = "pnpm dev"
 cwd = "web/projects/partner-portal"
 group = "web"
+needs = ["pnpm", "web-deps"]

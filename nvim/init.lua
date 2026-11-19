@@ -124,6 +124,7 @@ _require 'config.keymap'
 _require 'config.commands'
 _require 'config.statuscolumn'
 require('config.tmux_blame').setup()  -- cursor-line blame in the tmux status bar
+require('config.dev').setup()  -- :DevDoctor, and a warning when this project's setup is broken
 
 require 'config.folding'
 
